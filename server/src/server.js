@@ -5,7 +5,7 @@ import connectDB from "./config/db.js";
 import productRoutes from "./routes/product.route.js";
 import authRoutes from "./routes/auth.route.js";
 import orderRoutes from "./routes/order.route.js";
-
+import userRoutes from "./routes/user.route.js";
 dotenv.config();
 
 const app=express();
@@ -16,6 +16,7 @@ app.use(express.json());
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 
 app.get("/",(req,res)=>{
         res.json({
