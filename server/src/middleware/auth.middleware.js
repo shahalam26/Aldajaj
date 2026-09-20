@@ -23,6 +23,7 @@ const authenticate=async (req,res,next)=>{
       });
     }
      req.user = user;
+     console.log("AUTH USER:", req.user);
 
     next();
 

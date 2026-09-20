@@ -29,7 +29,42 @@ const orderSchema = new mongoose.Schema(
         },
       },
     ],
+   deliveryAddress: {
+  label: {
+    type: String,
+    enum: ["HOME", "WORK", "OTHER"],
+  },
 
+  addressLine: {
+    type: String,
+  },
+
+  city: {
+    type: String,
+  },
+
+  state: {
+    type: String,
+  },
+
+  pincode: {
+    type: String,
+  },
+
+  landmark: {
+    type: String,
+    default: "",
+  },
+  latitude: {
+  type: Number,
+  default: null,
+},
+
+longitude: {
+  type: Number,
+  default: null,
+},
+},
     totalAmount: {
       type: Number,
       required: true,
@@ -66,6 +101,11 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    orderSource: {
+  type: String,
+  enum: ["ONLINE", "POS"],
+  default: "ONLINE",
+},
   },
   {
     timestamps: true,

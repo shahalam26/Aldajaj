@@ -52,6 +52,8 @@ const addAddress = async (req, res) => {
       state,
       pincode,
       landmark,
+       latitude,
+  longitude,
     } = req.body;
 
     if (!addressLine || !city || !state || !pincode) {
@@ -77,6 +79,8 @@ const addAddress = async (req, res) => {
       state: state.trim(),
       pincode: pincode.trim(),
       landmark: landmark?.trim() || "",
+      latitude,
+  longitude,
     });
 
     await user.save();
@@ -93,4 +97,84 @@ const addAddress = async (req, res) => {
     });
   }
 };
-export { updateProfile,addAddress  };
+const findCustomerByPhone = async (req, res) => {
+  try {
+    const { phone } = req.query;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
+
+    const customer = await User.findOne({
+      phone: phone.trim(),
+      role: "user",
+    }).select("-password");
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "Customer not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      customer,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+const createPOSCustomer = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+
+    if (!name || !phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and phone are required",
+      });
+    }
+
+    const existingCustomer = await User.findOne({
+      phone: phone.trim(),
+    });
+
+    if (existingCustomer) {
+      return res.status(409).json({
+        success: false,
+        message: "Customer with this phone number already exists",
+      });
+    }
+
+    const customer = await User.create({
+      name: name.trim(),
+      phone: phone.trim(),
+      role: "user",
+      isPhoneVerified: false,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Customer created successfully",
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        phone: customer.phone,
+        role: customer.role,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+export { updateProfile,addAddress, findCustomerByPhone, createPOSCustomer,  };

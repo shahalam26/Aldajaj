@@ -1,9 +1,11 @@
 import express from "express";
 import {
   createOrder,
-  getAllOrders,updateOrderStatus,getMyOrders
+  createPOSOrder,
+  getAllOrders,
+  updateOrderStatus,
+  getMyOrders,
 } from "../controller/order.controller.js";
-
 
 import authenticate from "../middleware/auth.middleware.js";
 import adminOnly from "../middleware/admin.middleware.js";
@@ -11,6 +13,12 @@ import adminOnly from "../middleware/admin.middleware.js";
 const router = express.Router();
 
 router.post("/", authenticate, createOrder);
+router.post(
+  "/pos",
+  authenticate,
+  adminOnly,
+  createPOSOrder
+);
 router.get("/my-orders", authenticate, getMyOrders);
 
 router.get("/", authenticate, adminOnly, getAllOrders);
