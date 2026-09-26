@@ -1,4 +1,7 @@
+import "dotenv/config";
+
 import express from "express";
+
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";
@@ -6,7 +9,9 @@ import productRoutes from "./routes/product.route.js";
 import authRoutes from "./routes/auth.route.js";
 import orderRoutes from "./routes/order.route.js";
 import userRoutes from "./routes/user.route.js";
-dotenv.config();
+import dashboardRoute from "./routes/dashboard.route.js";
+import paymentRoute from "./routes/payment.route.js";
+
 
 const app=express();
 
@@ -17,6 +22,8 @@ app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/dashboard", dashboardRoute);
+app.use("/api/payment", paymentRoute);
 
 app.get("/",(req,res)=>{
         res.json({

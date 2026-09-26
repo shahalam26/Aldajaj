@@ -1,6 +1,6 @@
 import Product from "../model/product.model.js";
 
-const reduceStock = async (items) => {
+const reduceStock = async (items, session = null) => {
   for (const item of items) {
     await Product.findByIdAndUpdate(
       item.product,
@@ -11,11 +11,13 @@ const reduceStock = async (items) => {
       },
       {
         runValidators: true,
+        session,
       }
     );
   }
 };
-const increaseStock = async (items) => {
+
+const increaseStock = async (items, session = null) => {
   for (const item of items) {
     await Product.findByIdAndUpdate(
       item.product,
@@ -23,8 +25,15 @@ const increaseStock = async (items) => {
         $inc: {
           stock: item.quantity,
         },
+      },
+      {
+        session,
       }
     );
   }
 };
-export { reduceStock ,increaseStock};
+
+export {
+  reduceStock,
+  increaseStock,
+};

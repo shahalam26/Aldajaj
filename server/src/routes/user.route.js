@@ -5,7 +5,7 @@ import {
   updateProfile,
   addAddress,
   findCustomerByPhone,
-  createPOSCustomer,
+  createPOSCustomer,updateAddress,deleteAddress
 } from "../controller/user.controller.js";
 
 const router = express.Router();
@@ -14,6 +14,16 @@ const router = express.Router();
 router.patch("/profile", authenticate, updateProfile);
 
 router.post("/addresses", authenticate, addAddress);
+router.patch(
+  "/addresses/:addressId",
+  authenticate,
+  updateAddress
+);
+router.delete(
+  "/addresses/:addressId",
+  authenticate,
+  deleteAddress
+);
 router.get(
   "/customer",
   authenticate,

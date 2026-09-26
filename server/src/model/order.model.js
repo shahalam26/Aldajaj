@@ -29,42 +29,45 @@ const orderSchema = new mongoose.Schema(
         },
       },
     ],
-   deliveryAddress: {
-  label: {
-    type: String,
-    enum: ["HOME", "WORK", "OTHER"],
-  },
 
-  addressLine: {
-    type: String,
-  },
+    deliveryAddress: {
+      label: {
+        type: String,
+        enum: ["HOME", "WORK", "OTHER"],
+      },
 
-  city: {
-    type: String,
-  },
+      addressLine: {
+        type: String,
+      },
 
-  state: {
-    type: String,
-  },
+      city: {
+        type: String,
+      },
 
-  pincode: {
-    type: String,
-  },
+      state: {
+        type: String,
+      },
 
-  landmark: {
-    type: String,
-    default: "",
-  },
-  latitude: {
-  type: Number,
-  default: null,
-},
+      pincode: {
+        type: String,
+      },
 
-longitude: {
-  type: Number,
-  default: null,
-},
-},
+      landmark: {
+        type: String,
+        default: "",
+      },
+
+      latitude: {
+        type: Number,
+        default: null,
+      },
+
+      longitude: {
+        type: Number,
+        default: null,
+      },
+    },
+
     totalAmount: {
       type: Number,
       required: true,
@@ -97,16 +100,33 @@ longitude: {
       default: "PENDING",
     },
 
+    // Cashfree payment ID
     paymentId: {
       type: String,
       default: null,
+      index: true,
     },
+
+    // Our local order ID ↔ Cashfree order ID mapping
+    cashfreeOrderId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+
+    // Prevent duplicate inventory deduction
+    stockReduced: {
+      type: Boolean,
+      default: false,
+    },
+
     orderSource: {
-  type: String,
-  enum: ["ONLINE", "POS"],
-  default: "ONLINE",
-},
+      type: String,
+      enum: ["ONLINE", "POS"],
+      default: "ONLINE",
+    },
   },
+
   {
     timestamps: true,
   }

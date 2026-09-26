@@ -1,17 +1,28 @@
 import Order from "../model/order.model.js";
 import Product from "../model/product.model.js";
 import User from "../model/user.model.js";
+
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
-import { buildOrderPlacedMessage } from "../services/orderMessage.service.js";
+
+import {
+  buildOrderPlacedMessage,
+  buildOrderStatusMessage,
+} from "../services/orderMessage.service.js";
 
 import {
   reduceStock,
   increaseStock,
 } from "../services/inventory.service.js";
+
+// =====================================================
+// CREATE ONLINE ORDER
+// =====================================================
+
 const createOrder = async (req, res) => {
   try {
     const { items, paymentMethod, addressId } = req.body;
 
+    // Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -19,10 +30,21 @@ const createOrder = async (req, res) => {
       });
     }
 
+    // Validate payment method exists
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
         message: "Payment method is required",
+      });
+    }
+
+    // Validate payment method value
+    const allowedPaymentMethods = ["COD", "ONLINE"];
+
+    if (!allowedPaymentMethods.includes(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment method",
       });
     }
 
@@ -36,7 +58,7 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Find selected address from logged-in user's addresses
+    // Find selected address
     const selectedAddress = user.addresses.id(addressId);
 
     if (!selectedAddress) {
@@ -46,9 +68,20 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Get products
+    // Get product IDs
     const productIds = items.map((item) => item.product);
 
+    // Prevent duplicate products
+    const uniqueProductIds = new Set(productIds);
+
+    if (uniqueProductIds.size !== productIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate products are not allowed in an order",
+      });
+    }
+
+    // Get products
     const products = await Product.find({
       _id: { $in: productIds },
     });
@@ -56,11 +89,21 @@ const createOrder = async (req, res) => {
     let totalAmount = 0;
     const orderItems = [];
 
+    // Validate and prepare order items
     for (const item of items) {
+      // Validate quantity
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Quantity must be a positive integer",
+        });
+      }
+
       const product = products.find(
         (p) => p._id.toString() === item.product
       );
 
+      // Product must exist
       if (!product) {
         return res.status(404).json({
           success: false,
@@ -76,8 +119,9 @@ const createOrder = async (req, res) => {
         });
       }
 
-      // Stock is NOT checked here.
-      // Customer can place an order even if stock is 0.
+      // Stock is intentionally NOT checked here.
+      // Orders are allowed even when stock is 0.
+      // Stock can become negative.
 
       totalAmount += product.price * item.quantity;
 
@@ -107,10 +151,20 @@ const createOrder = async (req, res) => {
 
       paymentMethod,
     });
-    await reduceStock(orderItems);
-     const message = buildOrderPlacedMessage(order, user);
 
-await sendWhatsAppMessage(user.phone, message);
+    // Populate products for WhatsApp message
+    await order.populate("items.product", "name price");
+
+    // Reduce inventory
+    await reduceStock(orderItems);
+
+    // Build WhatsApp message
+    const message = buildOrderPlacedMessage(order, user);
+
+    // Send WhatsApp message
+    await sendWhatsAppMessage(user.phone, message);
+
+    // Response
     res.status(201).json({
       success: true,
       message: "Order created successfully",
@@ -124,6 +178,10 @@ await sendWhatsAppMessage(user.phone, message);
   }
 };
 
+// =====================================================
+// CREATE POS ORDER
+// =====================================================
+
 const createPOSOrder = async (req, res) => {
   try {
     const {
@@ -133,6 +191,7 @@ const createPOSOrder = async (req, res) => {
       deliveryAddress,
     } = req.body;
 
+    // Validate customer
     if (!customerId) {
       return res.status(400).json({
         success: false,
@@ -140,6 +199,7 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
+    // Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -147,6 +207,7 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
+    // Validate payment method exists
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
@@ -154,6 +215,17 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
+    // Validate payment method value
+    const allowedPaymentMethods = ["COD", "ONLINE"];
+
+    if (!allowedPaymentMethods.includes(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment method",
+      });
+    }
+
+    // Find customer
     const customer = await User.findOne({
       _id: customerId,
       role: "user",
@@ -166,8 +238,20 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
+    // Get product IDs
     const productIds = items.map((item) => item.product);
 
+    // Prevent duplicate products
+    const uniqueProductIds = new Set(productIds);
+
+    if (uniqueProductIds.size !== productIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate products are not allowed in an order",
+      });
+    }
+
+    // Get products
     const products = await Product.find({
       _id: { $in: productIds },
     });
@@ -175,11 +259,21 @@ const createPOSOrder = async (req, res) => {
     let totalAmount = 0;
     const orderItems = [];
 
+    // Validate and prepare order items
     for (const item of items) {
+      // Validate quantity
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Quantity must be a positive integer",
+        });
+      }
+
       const product = products.find(
         (p) => p._id.toString() === item.product
       );
 
+      // Product must exist
       if (!product) {
         return res.status(404).json({
           success: false,
@@ -187,6 +281,7 @@ const createPOSOrder = async (req, res) => {
         });
       }
 
+      // Admin-controlled availability
       if (!product.isAvailable) {
         return res.status(400).json({
           success: false,
@@ -203,21 +298,39 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
+    // Create POS order
     const order = await Order.create({
       user: customer._id,
+
       items: orderItems,
-     deliveryAddress: deliveryAddress || undefined,
+
+      deliveryAddress: deliveryAddress || undefined,
+
       totalAmount,
+
       paymentMethod,
+
       orderSource: "POS",
+
       paymentStatus:
-        paymentMethod === "COD" ? "PAID" : "PENDING",
+        paymentMethod === "COD"
+          ? "PAID"
+          : "PENDING",
     });
-   await reduceStock(orderItems);
+
+    // Populate products for WhatsApp message
+    await order.populate("items.product", "name price");
+
+    // Reduce inventory
+    await reduceStock(orderItems);
+
+    // Build WhatsApp message
     const message = buildOrderPlacedMessage(order, customer);
 
+    // Send WhatsApp message
     await sendWhatsAppMessage(customer.phone, message);
 
+    // Response
     res.status(201).json({
       success: true,
       message: "POS order created successfully",
@@ -230,6 +343,10 @@ const createPOSOrder = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// GET ALL ORDERS - ADMIN
+// =====================================================
 
 const getAllOrders = async (req, res) => {
   try {
@@ -250,11 +367,16 @@ const getAllOrders = async (req, res) => {
   }
 };
 
+// =====================================================
+// UPDATE ORDER STATUS - ADMIN
+// =====================================================
+
 const updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
+    // Allowed statuses
     const allowedStatuses = [
       "PLACED",
       "ACCEPTED",
@@ -265,6 +387,7 @@ const updateOrderStatus = async (req, res) => {
       "CANCELLED",
     ];
 
+    // Validate status
     if (!status || !allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -272,6 +395,7 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
+    // Find order
     const order = await Order.findById(id);
 
     if (!order) {
@@ -280,18 +404,56 @@ const updateOrderStatus = async (req, res) => {
         message: "Order not found",
       });
     }
-   if (status === "CANCELLED" && order.status !== "CANCELLED") {
-  if (
-    order.status === "PLACED" ||
-    order.status === "ACCEPTED"
-  ) {
-    await increaseStock(order.items);
-  }
-}
+
+    // Allowed status transitions
+    const allowedTransitions = {
+      PLACED: ["ACCEPTED", "CANCELLED"],
+      ACCEPTED: ["PROCESSING", "CANCELLED"],
+      PROCESSING: ["PACKED"],
+      PACKED: ["OUT_FOR_DELIVERY"],
+      OUT_FOR_DELIVERY: ["DELIVERED"],
+      DELIVERED: [],
+      CANCELLED: [],
+    };
+
+    // Prevent invalid status transition
+    if (!allowedTransitions[order.status].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot change order status from ${order.status} to ${status}`,
+      });
+    }
+
+    // Restore stock when order is cancelled
+    // Only restore if stock was previously reduced.
+    if (
+      status === "CANCELLED" &&
+      order.status !== "CANCELLED"
+    ) {
+      if (
+        order.status === "PLACED" ||
+        order.status === "ACCEPTED"
+      ) {
+        await increaseStock(order.items);
+      }
+    }
+
+    // Update status
     order.status = status;
 
     await order.save();
 
+    // Find customer
+    const user = await User.findById(order.user);
+
+    // Send WhatsApp status notification
+    if (user) {
+      const message = buildOrderStatusMessage(order, user);
+
+      await sendWhatsAppMessage(user.phone, message);
+    }
+
+    // Response
     res.status(200).json({
       success: true,
       message: "Order status updated successfully",
@@ -304,6 +466,10 @@ const updateOrderStatus = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// GET MY ORDERS - CUSTOMER
+// =====================================================
 
 const getMyOrders = async (req, res) => {
   try {
@@ -324,6 +490,10 @@ const getMyOrders = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// EXPORTS
+// =====================================================
 
 export {
   createOrder,

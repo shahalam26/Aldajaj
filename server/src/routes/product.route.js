@@ -5,13 +5,21 @@ import {
   getProductById,
   updateProduct,
   updateProductStock,
-  deleteProduct
-} from "../controller/product.controller.js";import authenticate from "../middleware/auth.middleware.js";
+  deleteProduct,
+  getInventory,adjustStock
+} from "../controller/product.controller.js";
 import adminOnly from "../middleware/admin.middleware.js";
+import authenticate from "../middleware/auth.middleware.js";
 
 const router=express.Router()
 
 router.post("/",authenticate,adminOnly, createProduct)
+router.get(
+  "/inventory",
+  authenticate,
+  adminOnly,
+  getInventory
+);
 router.get("/", getProduct);
 router.patch(
   "/:id/stock",
@@ -21,6 +29,12 @@ router.patch(
 );
 router.get("/:id",getProductById);
 router.patch("/:id",authenticate,adminOnly,updateProduct);
+router.patch(
+  "/:id/adjust-stock",
+  authenticate,
+  adminOnly,
+  adjustStock
+);
 router.delete("/:id",authenticate, adminOnly, deleteProduct);
 
 export default router;

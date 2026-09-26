@@ -244,7 +244,56 @@ const updateProductStock = async (req, res) => {
   }
 };
 
+const adjustStock = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity } = req.body;
 
+    if (quantity === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Adjustment quantity is required",
+      });
+    }
+
+    if (!Number.isInteger(quantity) || quantity === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Adjustment quantity must be a non-zero integer",
+      });
+    }
+
+    const product = await Product.findByIdAndUpdate(
+      id,
+      {
+        $inc: {
+          stock: quantity,
+        },
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Stock adjusted successfully",
+      product,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 const deleteProduct=async(req,res)=>{
 
     try{
@@ -271,11 +320,29 @@ const deleteProduct=async(req,res)=>{
     }
 }
 
+const getInventory = async (req, res) => {
+  try {
+    const products = await Product.find()
+      .select("name category price weight stock isAvailable image")
+      .sort({ stock: 1 });
+
+    res.status(200).json({
+      success: true,
+      inventory: products,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 export {
   createProduct,
   getProduct,
   getProductById,
   updateProduct,
   updateProductStock,
-  deleteProduct,
+  deleteProduct,getInventory,adjustStock
 };

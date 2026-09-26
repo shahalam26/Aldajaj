@@ -13,12 +13,39 @@ const updateProfile = async (req, res) => {
       });
     }
 
+    // Name validation
     if (name !== undefined) {
+      if (!name.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Name cannot be empty",
+        });
+      }
+
       user.name = name.trim();
     }
 
+    // Email validation
     if (email !== undefined) {
-      user.email = email.trim().toLowerCase();
+      const trimmedEmail = email.trim().toLowerCase();
+
+      if (!trimmedEmail) {
+        return res.status(400).json({
+          success: false,
+          message: "Email cannot be empty",
+        });
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+      if (!emailRegex.test(trimmedEmail)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid email address",
+        });
+      }
+
+      user.email = trimmedEmail;
     }
 
     await user.save();
@@ -52,8 +79,9 @@ const addAddress = async (req, res) => {
       state,
       pincode,
       landmark,
-       latitude,
-  longitude,
+      latitude,
+      longitude,
+      isDefault,
     } = req.body;
 
     if (!addressLine || !city || !state || !pincode) {
@@ -72,6 +100,18 @@ const addAddress = async (req, res) => {
       });
     }
 
+    // If this address is going to be default,
+    // remove default status from existing addresses.
+    if (isDefault === true) {
+      user.addresses.forEach((address) => {
+        address.isDefault = false;
+      });
+    }
+
+    // If user has no address yet, make the first address default.
+    const shouldBeDefault =
+      isDefault === true || user.addresses.length === 0;
+
     user.addresses.push({
       label: label || "HOME",
       addressLine: addressLine.trim(),
@@ -79,8 +119,9 @@ const addAddress = async (req, res) => {
       state: state.trim(),
       pincode: pincode.trim(),
       landmark: landmark?.trim() || "",
-      latitude,
-  longitude,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+      isDefault: shouldBeDefault,
     });
 
     await user.save();
@@ -97,6 +138,141 @@ const addAddress = async (req, res) => {
     });
   }
 };
+
+const updateAddress = async (req, res) => {
+  try {
+    const { addressId } = req.params;
+
+    const {
+      label,
+      addressLine,
+      city,
+      state,
+      pincode,
+      landmark,
+      latitude,
+      longitude,
+      isDefault,
+    } = req.body;
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const address = user.addresses.id(addressId);
+
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+
+    // If this address is being made default,
+    // remove default status from all other addresses.
+    if (isDefault === true) {
+      user.addresses.forEach((item) => {
+        item.isDefault = false;
+      });
+
+      address.isDefault = true;
+    }
+
+    if (label !== undefined) {
+      address.label = label;
+    }
+
+    if (addressLine !== undefined) {
+      address.addressLine = addressLine.trim();
+    }
+
+    if (city !== undefined) {
+      address.city = city.trim();
+    }
+
+    if (state !== undefined) {
+      address.state = state.trim();
+    }
+
+    if (pincode !== undefined) {
+      address.pincode = pincode.trim();
+    }
+
+    if (landmark !== undefined) {
+      address.landmark = landmark.trim();
+    }
+
+    if (latitude !== undefined) {
+      address.latitude = latitude;
+    }
+
+    if (longitude !== undefined) {
+      address.longitude = longitude;
+    }
+
+    if (isDefault !== undefined && isDefault === false) {
+      address.isDefault = false;
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Address updated successfully",
+      addresses: user.addresses,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+const deleteAddress = async (req, res) => {
+  try {
+    const { addressId } = req.params;
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const address = user.addresses.id(addressId);
+
+    if (!address) {
+      return res.status(404).json({
+        success: false,
+        message: "Address not found",
+      });
+    }
+
+    address.deleteOne();
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Address deleted successfully",
+      addresses: user.addresses,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 const findCustomerByPhone = async (req, res) => {
   try {
     const { phone } = req.query;
@@ -177,4 +353,4 @@ const createPOSCustomer = async (req, res) => {
     });
   }
 };
-export { updateProfile,addAddress, findCustomerByPhone, createPOSCustomer,  };
+export { updateProfile,addAddress, findCustomerByPhone, createPOSCustomer,updateAddress,deleteAddress };
