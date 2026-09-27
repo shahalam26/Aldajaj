@@ -30,7 +30,7 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Validate payment method exists
+    // Validate payment method
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
@@ -38,7 +38,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Validate payment method value
     const allowedPaymentMethods = ["COD", "ONLINE"];
 
     if (!allowedPaymentMethods.includes(paymentMethod)) {
@@ -91,7 +90,6 @@ const createOrder = async (req, res) => {
 
     // Validate and prepare order items
     for (const item of items) {
-      // Validate quantity
       if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
         return res.status(400).json({
           success: false,
@@ -103,7 +101,6 @@ const createOrder = async (req, res) => {
         (p) => p._id.toString() === item.product
       );
 
-      // Product must exist
       if (!product) {
         return res.status(404).json({
           success: false,
@@ -119,9 +116,8 @@ const createOrder = async (req, res) => {
         });
       }
 
-      // Stock is intentionally NOT checked here.
-      // Orders are allowed even when stock is 0.
-      // Stock can become negative.
+      // Stock is intentionally NOT checked.
+      // Stock is allowed to become negative.
 
       totalAmount += product.price * item.quantity;
 
@@ -132,7 +128,7 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Create order
+    // Create local order first
     const order = await Order.create({
       user: req.user._id,
 
@@ -145,33 +141,96 @@ const createOrder = async (req, res) => {
         state: selectedAddress.state,
         pincode: selectedAddress.pincode,
         landmark: selectedAddress.landmark,
+        latitude: selectedAddress.latitude,
+        longitude: selectedAddress.longitude,
       },
 
       totalAmount,
 
       paymentMethod,
+
+      paymentStatus:
+        paymentMethod === "COD" ? "PENDING" : "PENDING",
+
+      stockReduced: false,
+
+      orderSource: "ONLINE",
     });
 
-    // Populate products for WhatsApp message
-    await order.populate("items.product", "name price");
+    // =====================================================
+    // COD ORDER
+    // =====================================================
 
-    // Reduce inventory
-    await reduceStock(orderItems);
+    if (paymentMethod === "COD") {
+      await reduceStock(orderItems);
 
-    // Build WhatsApp message
-    const message = buildOrderPlacedMessage(order, user);
+      order.stockReduced = true;
 
-    // Send WhatsApp message
-    await sendWhatsAppMessage(user.phone, message);
+      await order.populate("items.product", "name price");
 
-    // Response
-    res.status(201).json({
-      success: true,
-      message: "Order created successfully",
-      order,
-    });
+      const message = buildOrderPlacedMessage(order, user);
+
+      await sendWhatsAppMessage(user.phone, message);
+
+      await order.save();
+
+      return res.status(201).json({
+        success: true,
+        message: "COD order created successfully",
+        order,
+      });
+    }
+
+    // =====================================================
+    // ONLINE PAYMENT
+    // =====================================================
+
+    try {
+      const { createCashfreeOrder } = await import(
+        "../services/payment.service.js"
+      );
+
+      const cashfreeOrder = await createCashfreeOrder({
+        orderId: order._id.toString(),
+        amount: totalAmount,
+        user,
+      });
+
+      order.cashfreeOrderId = cashfreeOrder.order_id;
+
+      await order.save();
+
+      return res.status(201).json({
+        success: true,
+        message: "Online payment order created",
+        order,
+        payment: {
+          orderId: cashfreeOrder.order_id,
+          paymentSessionId: cashfreeOrder.payment_session_id,
+        },
+      });
+    } catch (paymentError) {
+      // Cashfree order creation failed.
+      // Remove the pending local order.
+      await Order.findByIdAndDelete(order._id);
+
+      console.error(
+        "Cashfree order creation failed:",
+        paymentError.response?.data || paymentError.message
+      );
+
+      return res.status(502).json({
+        success: false,
+        message: "Failed to create online payment",
+        error:
+          paymentError.response?.data ||
+          paymentError.message,
+      });
+    }
   } catch (error) {
-    res.status(500).json({
+    console.error("Create order error:", error.message);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -402,6 +461,19 @@ const updateOrderStatus = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Order not found",
+      });
+    }
+
+    // Online orders must be paid before acceptance
+    if (
+      status === "ACCEPTED" &&
+      order.paymentMethod === "ONLINE" &&
+      order.paymentStatus !== "PAID"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Online order cannot be accepted before payment is successful",
       });
     }
 

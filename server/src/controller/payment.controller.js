@@ -1,4 +1,23 @@
+import crypto from "crypto";
+
 import Cashfree from "../config/cashfree.js";
+
+import Order from "../model/order.model.js";
+import User from "../model/user.model.js";
+
+import {
+  reduceStock,
+} from "../services/inventory.service.js";
+
+import sendWhatsAppMessage from "../services/whatsapp.service.js";
+
+import {
+  buildOrderPlacedMessage,
+} from "../services/orderMessage.service.js";
+
+// =====================================================
+// CREATE TEST PAYMENT
+// =====================================================
 
 const createTestPayment = async (req, res) => {
   try {
@@ -43,6 +62,10 @@ const createTestPayment = async (req, res) => {
   }
 };
 
+// =====================================================
+// VERIFY TEST PAYMENT
+// =====================================================
+
 const verifyTestPayment = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -67,24 +90,318 @@ const verifyTestPayment = async (req, res) => {
     });
   }
 };
+
+// =====================================================
+// VERIFY CASHFREE WEBHOOK SIGNATURE
+// =====================================================
+
+const verifyCashfreeWebhookSignature = (
+  signature,
+  timestamp,
+  rawBody
+) => {
+  try {
+    if (!signature || !timestamp || !rawBody) {
+      return false;
+    }
+
+    const signedPayload = timestamp + rawBody;
+
+    const generatedSignature = crypto
+      .createHmac(
+        "sha256",
+        process.env.CASHFREE_SECRET_KEY
+      )
+      .update(signedPayload)
+      .digest("base64");
+
+    return crypto.timingSafeEqual(
+      Buffer.from(generatedSignature),
+      Buffer.from(signature)
+    );
+  } catch (error) {
+    console.error(
+      "Webhook signature verification error:",
+      error.message
+    );
+
+    return false;
+  }
+};
+
+// =====================================================
+// CASHFREE WEBHOOK
+// =====================================================
+
 const cashfreeWebhook = async (req, res) => {
   try {
     console.log("========== CASHFREE WEBHOOK ==========");
-    console.log("Webhook received:", req.body);
-    console.log("======================================");
 
-    res.status(200).json({
+    const signature = req.headers["x-webhook-signature"];
+    const timestamp = req.headers["x-webhook-timestamp"];
+
+    const rawBody = Buffer.isBuffer(req.body)
+      ? req.body.toString("utf8")
+      : "";
+
+    console.log("Webhook signature:", signature);
+    console.log("Webhook timestamp:", timestamp);
+
+    // =================================================
+    // 1. VERIFY SIGNATURE
+    // =================================================
+
+    const isValid = verifyCashfreeWebhookSignature(
+      signature,
+      timestamp,
+      rawBody
+    );
+
+    if (!isValid) {
+      console.error("❌ Invalid Cashfree webhook signature");
+
+      return res.status(401).json({
+        success: false,
+        message: "Invalid webhook signature",
+      });
+    }
+
+    console.log("✅ Cashfree webhook signature verified");
+
+    // =================================================
+    // 2. PARSE WEBHOOK
+    // =================================================
+
+    const webhookData = JSON.parse(rawBody);
+
+    console.log(
+      "Cashfree webhook data:",
+      JSON.stringify(webhookData, null, 2)
+    );
+
+    // =================================================
+    // 3. GET EVENT DETAILS
+    // =================================================
+
+    const eventType =
+      webhookData.type ||
+      webhookData.event_type;
+
+    const cashfreeOrderId =
+      webhookData.data?.order?.order_id;
+
+    const paymentId =
+      webhookData.data?.payment?.cf_payment_id;
+
+    const paymentStatus =
+      webhookData.data?.payment?.payment_status;
+
+    const paymentAmount =
+      webhookData.data?.payment?.payment_amount;
+
+    console.log("Event:", eventType);
+    console.log("Cashfree Order ID:", cashfreeOrderId);
+    console.log("Payment ID:", paymentId);
+    console.log("Payment Status:", paymentStatus);
+    console.log("Payment Amount:", paymentAmount);
+
+    // =================================================
+    // 4. BASIC VALIDATION
+    // =================================================
+
+    if (!cashfreeOrderId) {
+      console.error("❌ Cashfree order ID missing");
+
+      return res.status(400).json({
+        success: false,
+        message: "Cashfree order ID missing",
+      });
+    }
+
+    // =================================================
+    // 5. FIND LOCAL ORDER
+    // =================================================
+
+    const order = await Order.findOne({
+      cashfreeOrderId,
+    });
+
+    if (!order) {
+      console.error(
+        "❌ Local order not found:",
+        cashfreeOrderId
+      );
+
+      return res.status(404).json({
+        success: false,
+        message: "Local order not found",
+      });
+    }
+
+    console.log(
+      "Local order found:",
+      order._id.toString()
+    );
+
+    // =================================================
+    // 6. VERIFY PAYMENT AMOUNT
+    // =================================================
+
+    if (
+      paymentAmount !== undefined &&
+      Number(paymentAmount) !== Number(order.totalAmount)
+    ) {
+      console.error("❌ Payment amount mismatch");
+
+      return res.status(400).json({
+        success: false,
+        message: "Payment amount mismatch",
+      });
+    }
+
+    // =================================================
+    // 7. SUCCESS PAYMENT
+    // =================================================
+
+    if (
+      paymentStatus === "SUCCESS" ||
+      eventType === "PAYMENT_SUCCESS_WEBHOOK"
+    ) {
+      // -------------------------------------------------
+      // Idempotency
+      // -------------------------------------------------
+
+      if (order.paymentStatus === "PAID") {
+        console.log(
+          "ℹ️ Order already marked as PAID"
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Payment already processed",
+        });
+      }
+
+      // -------------------------------------------------
+      // Mark payment as paid
+      // -------------------------------------------------
+
+      order.paymentStatus = "PAID";
+
+      order.paymentId = paymentId || null;
+
+      // -------------------------------------------------
+      // Reduce stock only once
+      // -------------------------------------------------
+
+      if (!order.stockReduced) {
+        await reduceStock(order.items);
+
+        order.stockReduced = true;
+
+        console.log("✅ Stock reduced");
+      }
+
+      // -------------------------------------------------
+      // Populate products for WhatsApp
+      // -------------------------------------------------
+
+      await order.populate(
+        "items.product",
+        "name price"
+      );
+
+      // -------------------------------------------------
+      // Save order
+      // -------------------------------------------------
+
+      await order.save();
+
+      console.log("✅ Order marked as PAID");
+
+      // -------------------------------------------------
+      // WhatsApp confirmation
+      // -------------------------------------------------
+
+      const user = await User.findById(order.user);
+
+      if (user) {
+        const message = buildOrderPlacedMessage(
+          order,
+          user
+        );
+
+        await sendWhatsAppMessage(
+          user.phone,
+          message
+        );
+
+        console.log(
+          "✅ Order confirmation WhatsApp sent"
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Payment processed successfully",
+      });
+    }
+
+    // =================================================
+    // FAILED PAYMENT
+    // =================================================
+
+    if (
+      paymentStatus === "FAILED" ||
+      eventType === "PAYMENT_FAILED_WEBHOOK"
+    ) {
+      order.paymentStatus = "FAILED";
+
+      if (paymentId) {
+        order.paymentId = paymentId;
+      }
+
+      await order.save();
+
+      console.log("❌ Payment marked as FAILED");
+
+      return res.status(200).json({
+        success: true,
+        message: "Payment failure processed",
+      });
+    }
+
+    // =================================================
+    // OTHER EVENTS
+    // =================================================
+
+    console.log(
+      "ℹ️ Webhook received but no payment state change required"
+    );
+
+    return res.status(200).json({
       success: true,
-      message: "Webhook received successfully",
+      message: "Webhook received",
     });
   } catch (error) {
-    console.error("Webhook error:", error.message);
+    console.error(
+      "Webhook processing error:",
+      error.message
+    );
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Webhook processing failed",
     });
   }
 };
 
-export  {createTestPayment ,verifyTestPayment,cashfreeWebhook};
+// =====================================================
+// EXPORTS
+// =====================================================
+
+export {
+  createTestPayment,
+  verifyTestPayment,
+  cashfreeWebhook,
+};
