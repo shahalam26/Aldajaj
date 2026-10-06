@@ -1,16 +1,43 @@
-# React + Vite
+# Dilli Cuts — Final React Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+This client is wired to the existing Aldajaj backend routes.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Replace your `client/src` with this `src` folder.
+2. Replace `client/package.json` and `client/vite.config.js`.
+3. Run:
 
-## React Compiler
+```bash
+npm install
+npm run dev
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Optional `.env`:
 
-## Expanding the Oxlint configuration
+```env
+VITE_API_URL=http://localhost:5000/api
+VITE_CASHFREE_MODE=sandbox
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Connected backend routes
+
+- `GET /api/products`
+- `POST /api/auth/request-otp`
+- `POST /api/auth/verify-otp`
+- `PATCH /api/users/profile`
+- `POST /api/users/addresses`
+- `POST /api/orders`
+- `GET /api/orders/my-orders`
+- `POST /api/orders/pos`
+- `GET /api/orders`
+- `PATCH /api/orders/:id/status`
+- `GET /api/dashboard/today`
+- `GET /api/products/inventory`
+- `POST /api/products`
+- `GET /api/users/customer`
+- Cashfree hosted checkout using the payment session returned by `POST /api/orders`.
+
+Customer stock quantities are never requested from the public product API because the backend already excludes `stock` from public product responses.
+
+For production, keep Cashfree payment confirmation server-side through the existing webhook. The frontend only opens checkout and displays the resulting order state.
