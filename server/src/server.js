@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import express from "express";
 import cors from "cors";
-
+import helmet from "helmet";
 import connectDB from "./config/db.js";
 
 import productRoutes from "./routes/product.route.js";
@@ -15,7 +15,37 @@ import paymentWebhookRoute from "./routes/payment.webhook.route.js";
 
 const app = express();
 
-app.use(cors());
+/*
+|--------------------------------------------------------------------------
+| CORS
+|--------------------------------------------------------------------------
+| Only allow the frontend origin configured in environment variables.
+| This prevents unknown websites from making browser requests to the API.
+*/
+
+const allowedOrigins = (process.env.FRONTEND_URL || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests without an Origin header
+      // (Postman, server-to-server requests, Cashfree webhook, etc.)
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origin is not allowed by CORS"));
+    },
+    credentials: true,
+  })
+);
 
 // Cashfree webhook MUST receive the raw body
 // before express.json() parses it.
@@ -24,6 +54,9 @@ app.use(
   express.raw({ type: "application/json" }),
   paymentWebhookRoute
 );
+
+// Security headers
+app.use(helmet());
 
 // Normal JSON requests
 app.use(express.json());

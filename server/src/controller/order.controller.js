@@ -1,3 +1,5 @@
+import mongoose from "mongoose";
+
 import Order from "../model/order.model.js";
 import Product from "../model/product.model.js";
 import User from "../model/user.model.js";
@@ -22,7 +24,6 @@ const createOrder = async (req, res) => {
   try {
     const { items, paymentMethod, addressId } = req.body;
 
-    // Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -30,7 +31,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Validate payment method
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
@@ -47,7 +47,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Get logged-in user
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -57,7 +56,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Find selected address
     const selectedAddress = user.addresses.id(addressId);
 
     if (!selectedAddress) {
@@ -67,10 +65,8 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Get product IDs
     const productIds = items.map((item) => item.product);
 
-    // Prevent duplicate products
     const uniqueProductIds = new Set(productIds);
 
     if (uniqueProductIds.size !== productIds.length) {
@@ -80,7 +76,6 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Get products
     const products = await Product.find({
       _id: { $in: productIds },
     });
@@ -88,7 +83,6 @@ const createOrder = async (req, res) => {
     let totalAmount = 0;
     const orderItems = [];
 
-    // Validate and prepare order items
     for (const item of items) {
       if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
         return res.status(400).json({
@@ -108,16 +102,14 @@ const createOrder = async (req, res) => {
         });
       }
 
-      // Admin-controlled availability
+      // Availability is controlled by admin.
+      // Inventory stock does NOT block ordering.
       if (!product.isAvailable) {
         return res.status(400).json({
           success: false,
           message: `${product.name} is not available`,
         });
       }
-
-      // Stock is intentionally NOT checked.
-      // Stock is allowed to become negative.
 
       totalAmount += product.price * item.quantity;
 
@@ -128,7 +120,79 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // Create local order first
+    // =====================================================
+    // COD
+    // Order creation + inventory deduction = one transaction
+    // =====================================================
+
+    if (paymentMethod === "COD") {
+      const session = await mongoose.startSession();
+
+      let order;
+
+      try {
+        await session.withTransaction(async () => {
+          order = await Order.create(
+            [
+              {
+                user: req.user._id,
+
+                items: orderItems,
+
+                deliveryAddress: {
+                  label: selectedAddress.label,
+                  addressLine: selectedAddress.addressLine,
+                  city: selectedAddress.city,
+                  state: selectedAddress.state,
+                  pincode: selectedAddress.pincode,
+                  landmark: selectedAddress.landmark,
+                  latitude: selectedAddress.latitude,
+                  longitude: selectedAddress.longitude,
+                },
+
+                totalAmount,
+
+                paymentMethod,
+
+                paymentStatus: "PENDING",
+
+                stockReduced: false,
+
+                orderSource: "ONLINE",
+              },
+            ],
+            { session }
+          );
+
+          order = order[0];
+
+          await reduceStock(orderItems, session);
+
+          order.stockReduced = true;
+
+          await order.save({ session });
+        });
+      } finally {
+        await session.endSession();
+      }
+
+      await order.populate("items.product", "name price");
+
+      const message = buildOrderPlacedMessage(order, user);
+
+      await sendWhatsAppMessage(user.phone, message);
+
+      return res.status(201).json({
+        success: true,
+        message: "COD order created successfully",
+        order,
+      });
+    }
+
+    // =====================================================
+    // ONLINE PAYMENT
+    // =====================================================
+
     const order = await Order.create({
       user: req.user._id,
 
@@ -149,41 +213,12 @@ const createOrder = async (req, res) => {
 
       paymentMethod,
 
-      paymentStatus:
-        paymentMethod === "COD" ? "PENDING" : "PENDING",
+      paymentStatus: "PENDING",
 
       stockReduced: false,
 
       orderSource: "ONLINE",
     });
-
-    // =====================================================
-    // COD ORDER
-    // =====================================================
-
-    if (paymentMethod === "COD") {
-      await reduceStock(orderItems);
-
-      order.stockReduced = true;
-
-      await order.populate("items.product", "name price");
-
-      const message = buildOrderPlacedMessage(order, user);
-
-      await sendWhatsAppMessage(user.phone, message);
-
-      await order.save();
-
-      return res.status(201).json({
-        success: true,
-        message: "COD order created successfully",
-        order,
-      });
-    }
-
-    // =====================================================
-    // ONLINE PAYMENT
-    // =====================================================
 
     try {
       const { createCashfreeOrder } = await import(
@@ -210,8 +245,6 @@ const createOrder = async (req, res) => {
         },
       });
     } catch (paymentError) {
-      // Cashfree order creation failed.
-      // Remove the pending local order.
       await Order.findByIdAndDelete(order._id);
 
       console.error(
@@ -250,7 +283,6 @@ const createPOSOrder = async (req, res) => {
       deliveryAddress,
     } = req.body;
 
-    // Validate customer
     if (!customerId) {
       return res.status(400).json({
         success: false,
@@ -258,7 +290,6 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({
         success: false,
@@ -266,7 +297,6 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Validate payment method exists
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
@@ -274,7 +304,6 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Validate payment method value
     const allowedPaymentMethods = ["COD", "ONLINE"];
 
     if (!allowedPaymentMethods.includes(paymentMethod)) {
@@ -284,7 +313,6 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Find customer
     const customer = await User.findOne({
       _id: customerId,
       role: "user",
@@ -297,10 +325,8 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Get product IDs
     const productIds = items.map((item) => item.product);
 
-    // Prevent duplicate products
     const uniqueProductIds = new Set(productIds);
 
     if (uniqueProductIds.size !== productIds.length) {
@@ -310,7 +336,6 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Get products
     const products = await Product.find({
       _id: { $in: productIds },
     });
@@ -318,9 +343,7 @@ const createPOSOrder = async (req, res) => {
     let totalAmount = 0;
     const orderItems = [];
 
-    // Validate and prepare order items
     for (const item of items) {
-      // Validate quantity
       if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
         return res.status(400).json({
           success: false,
@@ -332,7 +355,6 @@ const createPOSOrder = async (req, res) => {
         (p) => p._id.toString() === item.product
       );
 
-      // Product must exist
       if (!product) {
         return res.status(404).json({
           success: false,
@@ -340,7 +362,6 @@ const createPOSOrder = async (req, res) => {
         });
       }
 
-      // Admin-controlled availability
       if (!product.isAvailable) {
         return res.status(400).json({
           success: false,
@@ -357,46 +378,72 @@ const createPOSOrder = async (req, res) => {
       });
     }
 
-    // Create POS order
-    const order = await Order.create({
-      user: customer._id,
+    const session = await mongoose.startSession();
 
-      items: orderItems,
+    let order;
 
-      deliveryAddress: deliveryAddress || undefined,
+    try {
+      await session.withTransaction(async () => {
+        const createdOrders = await Order.create(
+          [
+            {
+              user: customer._id,
 
-      totalAmount,
+              items: orderItems,
 
-      paymentMethod,
+              deliveryAddress:
+                deliveryAddress || undefined,
 
-      orderSource: "POS",
+              totalAmount,
 
-      paymentStatus:
-        paymentMethod === "COD"
-          ? "PAID"
-          : "PENDING",
-    });
+              paymentMethod,
 
-    // Populate products for WhatsApp message
+              orderSource: "POS",
+
+              paymentStatus:
+                paymentMethod === "COD"
+                  ? "PAID"
+                  : "PENDING",
+
+              stockReduced: false,
+            },
+          ],
+          { session }
+        );
+
+        order = createdOrders[0];
+
+        await reduceStock(orderItems, session);
+
+        order.stockReduced = true;
+
+        await order.save({ session });
+      });
+    } finally {
+      await session.endSession();
+    }
+
     await order.populate("items.product", "name price");
 
-    // Reduce inventory
-    await reduceStock(orderItems);
+    const message = buildOrderPlacedMessage(
+      order,
+      customer
+    );
 
-    // Build WhatsApp message
-    const message = buildOrderPlacedMessage(order, customer);
+    await sendWhatsAppMessage(
+      customer.phone,
+      message
+    );
 
-    // Send WhatsApp message
-    await sendWhatsAppMessage(customer.phone, message);
-
-    // Response
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "POS order created successfully",
       order,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Create POS order error:", error.message);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -435,7 +482,6 @@ const updateOrderStatus = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    // Allowed statuses
     const allowedStatuses = [
       "PLACED",
       "ACCEPTED",
@@ -446,7 +492,6 @@ const updateOrderStatus = async (req, res) => {
       "CANCELLED",
     ];
 
-    // Validate status
     if (!status || !allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
@@ -454,7 +499,6 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Find order
     const order = await Order.findById(id);
 
     if (!order) {
@@ -464,7 +508,6 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Online orders must be paid before acceptance
     if (
       status === "ACCEPTED" &&
       order.paymentMethod === "ONLINE" &&
@@ -477,7 +520,6 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Allowed status transitions
     const allowedTransitions = {
       PLACED: ["ACCEPTED", "CANCELLED"],
       ACCEPTED: ["PROCESSING", "CANCELLED"],
@@ -488,7 +530,6 @@ const updateOrderStatus = async (req, res) => {
       CANCELLED: [],
     };
 
-    // Prevent invalid status transition
     if (!allowedTransitions[order.status].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -496,43 +537,60 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    // Restore stock when order is cancelled
-    // Only restore if stock was previously reduced.
     if (
       status === "CANCELLED" &&
-      order.status !== "CANCELLED"
-    ) {
-      if (
+      order.stockReduced &&
+      (
         order.status === "PLACED" ||
         order.status === "ACCEPTED"
-      ) {
-        await increaseStock(order.items);
+      )
+    ) {
+      const session = await mongoose.startSession();
+
+      try {
+        await session.withTransaction(async () => {
+          await increaseStock(order.items, session);
+
+          order.stockReduced = false;
+          order.status = status;
+
+          await order.save({ session });
+        });
+      } finally {
+        await session.endSession();
       }
+    } else {
+      order.status = status;
+
+      await order.save();
     }
 
-    // Update status
-    order.status = status;
-
-    await order.save();
-
-    // Find customer
     const user = await User.findById(order.user);
 
-    // Send WhatsApp status notification
     if (user) {
-      const message = buildOrderStatusMessage(order, user);
+      const message = buildOrderStatusMessage(
+        order,
+        user
+      );
 
-      await sendWhatsAppMessage(user.phone, message);
+      await sendWhatsAppMessage(
+        user.phone,
+        message
+      );
     }
 
-    // Response
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Order status updated successfully",
       order,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error(
+      "Update order status error:",
+      error.message
+    );
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -551,21 +609,17 @@ const getMyOrders = async (req, res) => {
       .populate("items.product", "name image price")
       .sort({ createdAt: -1 });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       orders,
     });
   } catch (error) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
-
-// =====================================================
-// EXPORTS
-// =====================================================
 
 export {
   createOrder,

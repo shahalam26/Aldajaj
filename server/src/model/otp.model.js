@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 const otpSchema = new mongoose.Schema(
@@ -16,7 +17,9 @@ const otpSchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
+      index: {
+        expireAfterSeconds: 0,
+      },
     },
 
     attempts: {

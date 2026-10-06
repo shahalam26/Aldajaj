@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import mongoose from "mongoose";
 
 import Cashfree from "../config/cashfree.js";
 
@@ -222,7 +223,7 @@ const cashfreeWebhook = async (req, res) => {
     // 5. FIND LOCAL ORDER
     // =================================================
 
-    const order = await Order.findOne({
+    let order = await Order.findOne({
       cashfreeOrderId,
     });
 
@@ -283,23 +284,66 @@ const cashfreeWebhook = async (req, res) => {
       }
 
       // -------------------------------------------------
-      // Mark payment as paid
+      // Payment + inventory transaction
       // -------------------------------------------------
 
-      order.paymentStatus = "PAID";
+      const session = await mongoose.startSession();
 
-      order.paymentId = paymentId || null;
+      try {
+        await session.withTransaction(async () => {
+          const transactionalOrder = await Order.findById(
+            order._id
+          ).session(session);
 
-      // -------------------------------------------------
-      // Reduce stock only once
-      // -------------------------------------------------
+          if (!transactionalOrder) {
+            throw new Error("Local order not found");
+          }
 
-      if (!order.stockReduced) {
-        await reduceStock(order.items);
+          // Another webhook may have processed this order
+          // while this webhook was waiting for the transaction.
+          if (
+            transactionalOrder.paymentStatus === "PAID"
+          ) {
+            order = transactionalOrder;
+            return;
+          }
 
-        order.stockReduced = true;
+          // ---------------------------------------------
+          // Mark payment as paid
+          // ---------------------------------------------
 
-        console.log("✅ Stock reduced");
+          transactionalOrder.paymentStatus = "PAID";
+
+          transactionalOrder.paymentId =
+            paymentId || null;
+
+          // ---------------------------------------------
+          // Reduce stock only once
+          // ---------------------------------------------
+
+          if (!transactionalOrder.stockReduced) {
+            await reduceStock(
+              transactionalOrder.items,
+              session
+            );
+
+            transactionalOrder.stockReduced = true;
+
+            console.log("✅ Stock reduced");
+          }
+
+          // ---------------------------------------------
+          // Save order
+          // ---------------------------------------------
+
+          await transactionalOrder.save({
+            session,
+          });
+
+          order = transactionalOrder;
+        });
+      } finally {
+        await session.endSession();
       }
 
       // -------------------------------------------------
@@ -310,12 +354,6 @@ const cashfreeWebhook = async (req, res) => {
         "items.product",
         "name price"
       );
-
-      // -------------------------------------------------
-      // Save order
-      // -------------------------------------------------
-
-      await order.save();
 
       console.log("✅ Order marked as PAID");
 
@@ -351,26 +389,38 @@ const cashfreeWebhook = async (req, res) => {
     // FAILED PAYMENT
     // =================================================
 
-    if (
-      paymentStatus === "FAILED" ||
-      eventType === "PAYMENT_FAILED_WEBHOOK"
-    ) {
-      order.paymentStatus = "FAILED";
+  if (
+  paymentStatus === "FAILED" ||
+  eventType === "PAYMENT_FAILED_WEBHOOK"
+) {
+  // Never allow a late/duplicate FAILED webhook
+  // to overwrite an already successful payment.
+  if (order.paymentStatus === "PAID") {
+    console.log(
+      "ℹ️ Ignoring FAILED webhook because order is already PAID"
+    );
 
-      if (paymentId) {
-        order.paymentId = paymentId;
-      }
+    return res.status(200).json({
+      success: true,
+      message: "Payment already processed successfully",
+    });
+  }
 
-      await order.save();
+  order.paymentStatus = "FAILED";
 
-      console.log("❌ Payment marked as FAILED");
+  if (paymentId) {
+    order.paymentId = paymentId;
+  }
 
-      return res.status(200).json({
-        success: true,
-        message: "Payment failure processed",
-      });
-    }
+  await order.save();
 
+  console.log("❌ Payment marked as FAILED");
+
+  return res.status(200).json({
+    success: true,
+    message: "Payment failure processed",
+  });
+}
     // =================================================
     // OTHER EVENTS
     // =================================================
