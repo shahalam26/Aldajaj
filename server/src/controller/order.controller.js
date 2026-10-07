@@ -166,6 +166,9 @@ const createOrder = async (req, res) => {
 
           order = order[0];
 
+          // IMPORTANT:
+          // Stock is NOT used to reject the order.
+          // reduceStock() may result in negative stock.
           await reduceStock(orderItems, session);
 
           order.stockReduced = true;
@@ -362,6 +365,8 @@ const createPOSOrder = async (req, res) => {
         });
       }
 
+      // Availability is controlled by admin.
+      // Inventory stock does NOT block ordering.
       if (!product.isAvailable) {
         return res.status(400).json({
           success: false,
@@ -413,6 +418,8 @@ const createPOSOrder = async (req, res) => {
 
         order = createdOrders[0];
 
+        // IMPORTANT:
+        // Stock does NOT block POS orders.
         await reduceStock(orderItems, session);
 
         order.stockReduced = true;
@@ -533,7 +540,8 @@ const updateOrderStatus = async (req, res) => {
     if (!allowedTransitions[order.status].includes(status)) {
       return res.status(400).json({
         success: false,
-        message: `Cannot change order status from ${order.status} to ${status}`,
+        message:
+          `Cannot change order status from ${order.status} to ${status}`,
       });
     }
 
@@ -621,10 +629,65 @@ const getMyOrders = async (req, res) => {
   }
 };
 
+// =====================================================
+// GET SINGLE ORDER - CUSTOMER TRACKING
+// =====================================================
+
+const getOrderById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Validate MongoDB ObjectId before querying
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID",
+      });
+    }
+
+    // IMPORTANT:
+    // Customer can only access their own order.
+    const order = await Order.findOne({
+      _id: id,
+      user: req.user._id,
+    }).populate(
+      "items.product",
+      "name image price"
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      order,
+    });
+  } catch (error) {
+    console.error(
+      "Get order by ID error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch order",
+    });
+  }
+};
+
+// =====================================================
+// EXPORTS
+// =====================================================
+
 export {
   createOrder,
   createPOSOrder,
   getAllOrders,
   updateOrderStatus,
   getMyOrders,
+  getOrderById,
 };
