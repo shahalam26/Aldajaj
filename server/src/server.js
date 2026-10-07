@@ -12,6 +12,7 @@ import userRoutes from "./routes/user.route.js";
 import dashboardRoute from "./routes/dashboard.route.js";
 import paymentRoute from "./routes/payment.route.js";
 import paymentWebhookRoute from "./routes/payment.webhook.route.js";
+import uploadRoutes from "./routes/upload.route.js";
 
 const app = express();
 
@@ -72,6 +73,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/dashboard", dashboardRoute);
 
 app.use("/api/payment", paymentRoute);
+app.use("/api/upload", uploadRoutes);
 
 app.get("/", (req, res) => {
   res.json({
