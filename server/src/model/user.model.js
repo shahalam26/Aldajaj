@@ -63,6 +63,13 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    username: {
+  type: String,
+  trim: true,
+  lowercase: true,
+  unique: true,
+  sparse: true,
+},
 
     email: {
       type: String,

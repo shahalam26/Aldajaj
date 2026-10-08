@@ -16,17 +16,25 @@ import authenticate from "../middleware/auth.middleware.js";
 
 const router = express.Router();
 
-// ===============================
-// PUBLIC ROUTES
-// ===============================
+// ======================================================
+// PUBLIC
+// ======================================================
 
+// Get all customer products
 router.get("/", getProduct);
 
-router.get("/:id", getProductById);
+// ======================================================
+// ADMIN
+// ======================================================
 
-// ===============================
-// ADMIN ROUTES
-// ===============================
+// Get complete inventory
+// IMPORTANT: must come before /:id
+router.get(
+  "/inventory",
+  authenticate,
+  adminOnly,
+  getInventory
+);
 
 // Create product
 router.post(
@@ -36,15 +44,7 @@ router.post(
   createProduct
 );
 
-// Inventory
-router.get(
-  "/inventory",
-  authenticate,
-  adminOnly,
-  getInventory
-);
-
-// Update product
+// Update complete product
 router.patch(
   "/:id",
   authenticate,
@@ -52,7 +52,7 @@ router.patch(
   updateProduct
 );
 
-// Update stock directly
+// Set exact stock
 router.patch(
   "/:id/stock",
   authenticate,
@@ -60,7 +60,7 @@ router.patch(
   updateProductStock
 );
 
-// Adjust stock (+/-)
+// Increase/decrease stock
 router.patch(
   "/:id/adjust-stock",
   authenticate,
@@ -75,5 +75,12 @@ router.delete(
   adminOnly,
   deleteProduct
 );
+
+// ======================================================
+// PUBLIC - SINGLE PRODUCT
+// IMPORTANT: keep this AFTER /inventory
+// ======================================================
+
+router.get("/:id", getProductById);
 
 export default router;

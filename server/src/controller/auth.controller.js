@@ -144,7 +144,70 @@ const loginUser = async (req, res) => {
     });
   }
 };
+const adminLogin = async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
+    const normalizedUsername =
+      typeof username === "string"
+        ? username.trim().toLowerCase()
+        : "";
+
+    if (!normalizedUsername || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Username and password are required",
+      });
+    }
+
+    const user = await User.findOne({
+      username: normalizedUsername,
+      role: "admin",
+    });
+
+    if (!user || !user.password) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid admin username or password",
+      });
+    }
+
+    const isPasswordCorrect = await bcrypt.compare(
+      password,
+      user.password
+    );
+
+    if (!isPasswordCorrect) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid admin username or password",
+      });
+    }
+
+    const token = generateToken(user);
+
+    return res.status(200).json({
+      success: true,
+      message: "Admin login successful",
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error("adminLogin error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Admin login failed",
+    });
+  }
+};
 const requestOTP = async (req, res) => {
   try {
     const normalizedPhone = normalizePhone(req.body.phone);
@@ -345,4 +408,5 @@ export {
   loginUser,
   requestOTP,
   verifyOTP,
+  adminLogin,
 };

@@ -1,20 +1,29 @@
-import jwt from "jsonwebtoken"
-import User from "../model/user.model.js"
+import jwt from "jsonwebtoken";
+import User from "../model/user.model.js";
 
-const authenticate=async (req,res,next)=>{
-    try{
-        const authHeader=req.headers.authorization;
+const authenticate = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
 
-        if(!authHeader || !authHeader.startsWith("Bearer ")){
-            return res.status(401).json({
-                  success: false,
+    if (
+      !authHeader ||
+      !authHeader.startsWith("Bearer ")
+    ) {
+      return res.status(401).json({
+        success: false,
         message: "Access denied. Token missing",
-            })
-        }
-        const token=authHeader.split(" ")[1];
-        const decoded=jwt.verify(token,process.env.JWT_SECRET);
+      });
+    }
 
-        const user =await User.findById(decoded.userId).select("-password")
+    const token = authHeader.split(" ")[1];
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
+
+    const user = await User.findById(decoded.userId)
+      .select("-password");
 
     if (!user) {
       return res.status(401).json({
@@ -22,17 +31,16 @@ const authenticate=async (req,res,next)=>{
         message: "User not found",
       });
     }
-     req.user = user;
-     console.log("AUTH USER:", req.user);
+
+    req.user = user;
 
     next();
-
-}
-catch (error) {
-    res.status(401).json({
+  } catch (error) {
+    return res.status(401).json({
       success: false,
       message: "Invalid token",
     });
   }
-}
+};
+
 export default authenticate;
