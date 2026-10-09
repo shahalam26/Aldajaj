@@ -1,5 +1,39 @@
 import User from "../model/user.model.js";
 
+const getCurrentUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isPhoneVerified: user.isPhoneVerified,
+        addresses: user.addresses,
+      },
+    });
+  } catch (error) {
+    console.error("getCurrentUser error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
 const updateProfile = async (req, res) => {
   try {
     const { name, email } = req.body;
@@ -50,7 +84,7 @@ const updateProfile = async (req, res) => {
 
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Profile updated successfully",
       user: {
@@ -64,12 +98,15 @@ const updateProfile = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("updateProfile error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
+
 const addAddress = async (req, res) => {
   try {
     const {
@@ -126,13 +163,15 @@ const addAddress = async (req, res) => {
 
     await user.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Address added successfully",
       addresses: user.addresses,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("addAddress error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -221,18 +260,21 @@ const updateAddress = async (req, res) => {
 
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Address updated successfully",
       addresses: user.addresses,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("updateAddress error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
+
 const deleteAddress = async (req, res) => {
   try {
     const { addressId } = req.params;
@@ -259,14 +301,15 @@ const deleteAddress = async (req, res) => {
 
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Address deleted successfully",
       addresses: user.addresses,
     });
-
   } catch (error) {
-    res.status(500).json({
+    console.error("deleteAddress error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
@@ -296,17 +339,20 @@ const findCustomerByPhone = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       customer,
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("findCustomerByPhone error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
+
 const createPOSCustomer = async (req, res) => {
   try {
     const { name, phone } = req.body;
@@ -336,7 +382,7 @@ const createPOSCustomer = async (req, res) => {
       isPhoneVerified: false,
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Customer created successfully",
       customer: {
@@ -347,10 +393,21 @@ const createPOSCustomer = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("createPOSCustomer error:", error);
+
+    return res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
-export { updateProfile,addAddress, findCustomerByPhone, createPOSCustomer,updateAddress,deleteAddress };
+
+export {
+  getCurrentUser,
+  updateProfile,
+  addAddress,
+  findCustomerByPhone,
+  createPOSCustomer,
+  updateAddress,
+  deleteAddress,
+};

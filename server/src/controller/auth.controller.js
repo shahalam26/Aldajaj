@@ -226,22 +226,29 @@ const requestOTP = async (req, res) => {
       });
     }
 
+    // Remove previous login OTPs for this phone
     await OTP.deleteMany({
       phone: normalizedPhone,
       purpose: "LOGIN",
     });
 
-    const otp = crypto.randomInt(100000, 1000000).toString();
+    // Generate 6-digit OTP
+    const otp = crypto
+      .randomInt(100000, 1000000)
+      .toString();
 
+    // Hash OTP before storing in database
     const otpHash = crypto
       .createHash("sha256")
       .update(otp)
       .digest("hex");
 
+    // OTP valid for 5 minutes
     const expiresAt = new Date(
       Date.now() + 5 * 60 * 1000
     );
 
+    // Save hashed OTP
     await OTP.create({
       phone: normalizedPhone,
       otpHash,
@@ -249,14 +256,23 @@ const requestOTP = async (req, res) => {
       purpose: "LOGIN",
     });
 
-    // OTP is intentionally not logged.
-    // SMS provider integration will deliver it in the dedicated OTP service step.
+    // ==========================================
+    // DEVELOPMENT MODE ONLY
+    // ==========================================
+    console.log("\n================================");
+    console.log("📱 LOGIN OTP");
+    console.log(`Phone: ${normalizedPhone}`);
+    console.log(`OTP: ${otp}`);
+    console.log("Valid for: 5 minutes");
+    console.log("================================\n");
 
     return res.status(200).json({
       success: true,
-      message: "OTP sent successfully",
+      message: "OTP generated successfully",
     });
   } catch (error) {
+    console.error("requestOTP error:", error);
+
     return res.status(500).json({
       success: false,
       message: error.message,

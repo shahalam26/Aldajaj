@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
+
 import Product from "../model/product.model.js";
+
+import cloudinary from "../config/cloudinary.js";
 
 const normalizeImages = ({
   image,
@@ -16,17 +19,11 @@ const normalizeImages = ({
       .filter(Boolean);
   }
 
-  if (
-    Array.isArray(imagePublicIds)
-  ) {
-    normalizedPublicIds =
-      imagePublicIds
-        .filter(
-          (item) =>
-            typeof item === "string"
-        )
-        .map((item) => item.trim())
-        .filter(Boolean);
+  if (Array.isArray(imagePublicIds)) {
+    normalizedPublicIds = imagePublicIds
+      .filter((item) => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   if (
@@ -37,13 +34,9 @@ const normalizeImages = ({
 
     if (
       trimmedImage &&
-      !normalizedImages.includes(
-        trimmedImage
-      )
+      !normalizedImages.includes(trimmedImage)
     ) {
-      normalizedImages.unshift(
-        trimmedImage
-      );
+      normalizedImages.unshift(trimmedImage);
     }
   }
 
@@ -411,6 +404,12 @@ const updateProduct = async (
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | NAME VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
     if (
       updates.name !== undefined
     ) {
@@ -429,6 +428,12 @@ const updateProduct = async (
       updates.name =
         updates.name.trim();
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DESCRIPTION VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
       updates.description !==
@@ -450,6 +455,12 @@ const updateProduct = async (
         updates.description.trim();
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | CATEGORY VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
     if (
       updates.category !==
       undefined
@@ -469,6 +480,12 @@ const updateProduct = async (
       updates.category =
         updates.category.trim();
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | PRICE VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
       updates.price !==
@@ -490,6 +507,12 @@ const updateProduct = async (
         });
       }
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | WEIGHT VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
       updates.weight !==
@@ -513,8 +536,14 @@ const updateProduct = async (
     }
 
     /*
-     * Negative stock is allowed.
-     */
+    |--------------------------------------------------------------------------
+    | STOCK VALIDATION
+    |--------------------------------------------------------------------------
+    |
+    | Negative stock is intentionally allowed.
+    |
+    */
+
     if (
       updates.stock !==
       undefined
@@ -534,6 +563,12 @@ const updateProduct = async (
         });
       }
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | IMAGES VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
       updates.images !==
@@ -565,6 +600,12 @@ const updateProduct = async (
           .filter(Boolean);
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | IMAGE PUBLIC IDS VALIDATION
+    |--------------------------------------------------------------------------
+    */
+
     if (
       updates.imagePublicIds !==
       undefined
@@ -580,7 +621,26 @@ const updateProduct = async (
             "Image public IDs must be an array",
         });
       }
+
+      updates.imagePublicIds =
+        updates.imagePublicIds
+          .filter(
+            (item) =>
+              typeof item ===
+              "string"
+          )
+          .map(
+            (item) =>
+              item.trim()
+          )
+          .filter(Boolean);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | MAIN IMAGE VALIDATION
+    |--------------------------------------------------------------------------
+    */
 
     if (
       updates.image !==
@@ -601,6 +661,13 @@ const updateProduct = async (
         updates.image.trim();
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | IF IMAGES ARE PROVIDED BUT MAIN
+    | IMAGE IS NOT, USE FIRST IMAGE
+    |--------------------------------------------------------------------------
+    */
+
     if (
       Array.isArray(
         updates.images
@@ -612,6 +679,85 @@ const updateProduct = async (
       updates.image =
         updates.images[0];
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | FETCH EXISTING PRODUCT
+    |--------------------------------------------------------------------------
+    |
+    | Required so that when admin removes
+    | an image from a product, its old
+    | Cloudinary asset can also be deleted.
+    |
+    */
+
+    const existingProduct =
+      await Product.findById(id);
+
+    if (!existingProduct) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Product not found",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | OLD CLOUDINARY PUBLIC IDS
+    |--------------------------------------------------------------------------
+    */
+
+    const oldPublicIds =
+      Array.isArray(
+        existingProduct.imagePublicIds
+      )
+        ? existingProduct.imagePublicIds.filter(
+            Boolean
+          )
+        : [];
+
+    /*
+    |--------------------------------------------------------------------------
+    | NEW CLOUDINARY PUBLIC IDS
+    |--------------------------------------------------------------------------
+    |
+    | If imagePublicIds were not supplied,
+    | assume the existing ones should remain.
+    |
+    */
+
+    const newPublicIds =
+      updates.imagePublicIds !==
+      undefined
+        ? Array.isArray(
+            updates.imagePublicIds
+          )
+          ? updates.imagePublicIds.filter(
+              Boolean
+            )
+          : []
+        : oldPublicIds;
+
+    /*
+    |--------------------------------------------------------------------------
+    | FIND REMOVED IMAGES
+    |--------------------------------------------------------------------------
+    */
+
+    const removedPublicIds =
+      oldPublicIds.filter(
+        (publicId) =>
+          !newPublicIds.includes(
+            publicId
+          )
+      );
+
+    /*
+    |--------------------------------------------------------------------------
+    | UPDATE MONGODB PRODUCT
+    |--------------------------------------------------------------------------
+    */
 
     const product =
       await Product.findByIdAndUpdate(
@@ -629,6 +775,40 @@ const updateProduct = async (
         message:
           "Product not found",
       });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DELETE REMOVED CLOUDINARY IMAGES
+    |--------------------------------------------------------------------------
+    */
+
+    if (
+      removedPublicIds.length > 0
+    ) {
+      const results =
+        await Promise.allSettled(
+          removedPublicIds.map(
+            (publicId) =>
+              cloudinary.uploader.destroy(
+                publicId
+              )
+          )
+        );
+
+      results.forEach(
+        (result, index) => {
+          if (
+            result.status ===
+            "rejected"
+          ) {
+            console.error(
+              `Failed to delete removed Cloudinary image: ${removedPublicIds[index]}`,
+              result.reason
+            );
+          }
+        }
+      );
     }
 
     return res.status(200).json({
@@ -843,10 +1023,14 @@ const deleteProduct = async (
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | FIND PRODUCT FIRST
+    |--------------------------------------------------------------------------
+    */
+
     const product =
-      await Product.findByIdAndDelete(
-        id
-      );
+      await Product.findById(id);
 
     if (!product) {
       return res.status(404).json({
@@ -856,10 +1040,63 @@ const deleteProduct = async (
       });
     }
 
+    /*
+    |--------------------------------------------------------------------------
+    | DELETE ALL CLOUDINARY ASSETS
+    |--------------------------------------------------------------------------
+    */
+
+    const publicIds =
+      Array.isArray(
+        product.imagePublicIds
+      )
+        ? product.imagePublicIds.filter(
+            Boolean
+          )
+        : [];
+
+    if (
+      publicIds.length > 0
+    ) {
+      const results =
+        await Promise.allSettled(
+          publicIds.map(
+            (publicId) =>
+              cloudinary.uploader.destroy(
+                publicId
+              )
+          )
+        );
+
+      results.forEach(
+        (result, index) => {
+          if (
+            result.status ===
+            "rejected"
+          ) {
+            console.error(
+              `Failed to delete Cloudinary image: ${publicIds[index]}`,
+              result.reason
+            );
+          }
+        }
+      );
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | DELETE PRODUCT FROM MONGODB
+    |--------------------------------------------------------------------------
+    */
+
+    await Product.deleteOne({
+      _id: product._id,
+    });
+
     return res.status(200).json({
       success: true,
       message:
-        "Product deleted successfully",
+        "Product and product images deleted successfully",
       product,
     });
   } catch (error) {
@@ -870,7 +1107,8 @@ const deleteProduct = async (
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message:
+        "Failed to delete product",
     });
   }
 };
