@@ -2,24 +2,223 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 
 import Cashfree from "../config/cashfree.js";
-
 import Order from "../model/order.model.js";
 import User from "../model/user.model.js";
-
-import {
-  reduceStock,
-} from "../services/inventory.service.js";
-
+import { reduceStock } from "../services/inventory.service.js";
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
+import { buildOrderPlacedMessage } from "../services/orderMessage.service.js";
 
-import {
-  buildOrderPlacedMessage,
-} from "../services/orderMessage.service.js";
+const amountsMatch = (a, b) => {
+  const first = Number(a);
+  const second = Number(b);
 
-// =====================================================
-// CREATE TEST PAYMENT
-// =====================================================
+  return (
+    Number.isFinite(first) &&
+    Number.isFinite(second) &&
+    Math.round(first * 100) === Math.round(second * 100)
+  );
+};
 
+const notifyPaidOrder = async (orderId) => {
+  try {
+    const order = await Order.findById(orderId).populate(
+      "items.product",
+      "name price"
+    );
+
+    if (!order) return;
+
+    const user = await User.findById(order.user);
+
+    if (!user?.phone) return;
+
+    const message = buildOrderPlacedMessage(order, user);
+    await sendWhatsAppMessage(user.phone, message);
+  } catch (error) {
+    // Notification failure must not undo a confirmed payment.
+    console.error(
+      "Paid-order WhatsApp notification failed:",
+      error.message
+    );
+  }
+};
+
+/**
+ * Verify payment for the authenticated customer's own online order.
+ */
+const verifyMyOrderPayment = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!mongoose.isValidObjectId(orderId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID",
+      });
+    }
+
+    const order = await Order.findOne({
+      _id: orderId,
+      user: req.user._id,
+      paymentMethod: "ONLINE",
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Online order not found",
+      });
+    }
+
+    if (order.paymentStatus === "PAID" && order.stockReduced) {
+      return res.status(200).json({
+        success: true,
+        paymentStatus: "PAID",
+        message: "Payment already verified",
+      });
+    }
+
+    if (!order.cashfreeOrderId) {
+      return res.status(409).json({
+        success: false,
+        message: "Cashfree order reference is missing",
+      });
+    }
+
+    // Fetch payment status directly from Cashfree.
+    const response = await Cashfree.PGOrderFetchPayments(
+      order.cashfreeOrderId
+    );
+
+    const payments = Array.isArray(response.data)
+      ? response.data
+      : [];
+
+    const successfulPayment = payments.find(
+      (payment) => payment.payment_status === "SUCCESS"
+    );
+
+    if (successfulPayment) {
+      if (
+        !amountsMatch(
+          successfulPayment.payment_amount,
+          order.totalAmount
+        )
+      ) {
+        console.error("Cashfree payment amount mismatch", {
+          localOrderId: order._id.toString(),
+          cashfreeOrderId: order.cashfreeOrderId,
+        });
+
+        return res.status(409).json({
+          success: false,
+          message: "Payment amount does not match the order",
+        });
+      }
+
+      let transitionedToPaid = false;
+      const session = await mongoose.startSession();
+
+      try {
+        await session.withTransaction(async () => {
+          const currentOrder = await Order.findOne({
+            _id: order._id,
+            user: req.user._id,
+          }).session(session);
+
+          if (!currentOrder) {
+            throw new Error("Order not found");
+          }
+
+          if (currentOrder.status === "CANCELLED") {
+            throw new Error(
+              "Order is cancelled; payment requires manual reconciliation"
+            );
+          }
+
+          if (currentOrder.paymentStatus !== "PAID") {
+            // Deduct inventory only once.
+            if (!currentOrder.stockReduced) {
+              await reduceStock(currentOrder.items, session);
+              currentOrder.stockReduced = true;
+            }
+
+            currentOrder.paymentStatus = "PAID";
+            currentOrder.paymentId =
+              String(successfulPayment.cf_payment_id || "") || null;
+
+            await currentOrder.save({ session });
+            transitionedToPaid = true;
+          } else if (!currentOrder.stockReduced) {
+            // Repair an inconsistent order without deducting twice.
+            await reduceStock(currentOrder.items, session);
+            currentOrder.stockReduced = true;
+            await currentOrder.save({ session });
+          }
+        });
+      } finally {
+        await session.endSession();
+      }
+
+      if (transitionedToPaid) {
+        await notifyPaidOrder(order._id);
+      }
+
+      return res.status(200).json({
+        success: true,
+        paymentStatus: "PAID",
+        message: "Payment verified successfully",
+      });
+    }
+
+    // Do not let a failed attempt overwrite an existing successful payment.
+    const latestFailedPayment = [...payments]
+      .reverse()
+      .find((payment) =>
+        ["FAILED", "USER_DROPPED", "CANCELLED", "VOID"].includes(
+          payment.payment_status
+        )
+      );
+
+    const hasPendingAttempt = payments.some((payment) =>
+      ["PENDING", "NOT_ATTEMPTED"].includes(payment.payment_status)
+    );
+
+    if (
+      latestFailedPayment &&
+      !hasPendingAttempt &&
+      order.paymentStatus !== "PAID"
+    ) {
+      order.paymentStatus = "FAILED";
+      order.paymentId =
+        String(latestFailedPayment.cf_payment_id || "") || null;
+
+      await order.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      paymentStatus: order.paymentStatus,
+      message:
+        order.paymentStatus === "FAILED"
+          ? "Payment failed"
+          : "Payment is still being confirmed",
+    });
+  } catch (error) {
+    console.error(
+      "verifyMyOrderPayment error:",
+      error.response?.data || error.message
+    );
+
+    return res.status(502).json({
+      success: false,
+      message: "Unable to verify payment right now",
+    });
+  }
+};
+
+// Standalone ₹1 test payment endpoint.
+// Do not expose this endpoint publicly in production.
 const createTestPayment = async (req, res) => {
   try {
     const orderId = `TEST_${Date.now()}`;
@@ -27,99 +226,103 @@ const createTestPayment = async (req, res) => {
     const request = {
       order_amount: 1,
       order_currency: "INR",
-
       order_id: orderId,
-
       customer_details: {
         customer_id: "test_customer_1",
         customer_name: "Test Customer",
         customer_email: "test@example.com",
         customer_phone: "9999999999",
       },
-
       order_meta: {
-        return_url: `http://localhost:5173/payment/success?order_id=${orderId}`,
+        return_url: `${
+          process.env.FRONTEND_URL?.split(",")[0] ||
+          "http://localhost:5173"
+        }/payment/success?order_id=${orderId}`,
       },
     };
 
     const response = await Cashfree.PGCreateOrder(request);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Cashfree test order created",
       data: response.data,
     });
   } catch (error) {
     console.error(
-      "Cashfree create order error:",
+      "Cashfree create test order error:",
       error.response?.data || error.message
     );
 
-    res.status(500).json({
+    return res.status(502).json({
       success: false,
-      message: "Failed to create Cashfree order",
-      error: error.response?.data || error.message,
+      message: "Failed to create Cashfree test order",
     });
   }
 };
-
-// =====================================================
-// VERIFY TEST PAYMENT
-// =====================================================
 
 const verifyTestPayment = async (req, res) => {
   try {
     const { orderId } = req.params;
 
+    if (
+      typeof orderId !== "string" ||
+      !orderId.startsWith("TEST_")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid test order ID",
+      });
+    }
+
     const response = await Cashfree.PGOrderFetchPayments(orderId);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Payment status fetched",
       data: response.data,
     });
   } catch (error) {
     console.error(
-      "Cashfree payment verification error:",
+      "Cashfree test payment verification error:",
       error.response?.data || error.message
     );
 
-    res.status(500).json({
+    return res.status(502).json({
       success: false,
-      message: "Failed to verify payment",
-      error: error.response?.data || error.message,
+      message: "Failed to verify test payment",
     });
   }
 };
 
-// =====================================================
-// VERIFY CASHFREE WEBHOOK SIGNATURE
-// =====================================================
-
+/**
+ * Verify Cashfree webhook signature using the original raw request body.
+ */
 const verifyCashfreeWebhookSignature = (
   signature,
   timestamp,
   rawBody
 ) => {
   try {
-    if (!signature || !timestamp || !rawBody) {
+    const secret = process.env.CASHFREE_SECRET_KEY;
+
+    if (!signature || !timestamp || !rawBody || !secret) {
       return false;
     }
 
-    const signedPayload = timestamp + rawBody;
-
     const generatedSignature = crypto
-      .createHmac(
-        "sha256",
-        process.env.CASHFREE_SECRET_KEY
-      )
-      .update(signedPayload)
+      .createHmac("sha256", secret)
+      .update(timestamp + rawBody)
       .digest("base64");
 
-    return crypto.timingSafeEqual(
-      Buffer.from(generatedSignature),
-      Buffer.from(signature)
-    );
+    const expected = Buffer.from(generatedSignature, "utf8");
+    const received = Buffer.from(String(signature), "utf8");
+
+    if (expected.length !== received.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expected, received);
   } catch (error) {
     console.error(
       "Webhook signature verification error:",
@@ -130,14 +333,8 @@ const verifyCashfreeWebhookSignature = (
   }
 };
 
-// =====================================================
-// CASHFREE WEBHOOK
-// =====================================================
-
 const cashfreeWebhook = async (req, res) => {
   try {
-    console.log("========== CASHFREE WEBHOOK ==========");
-
     const signature = req.headers["x-webhook-signature"];
     const timestamp = req.headers["x-webhook-timestamp"];
 
@@ -145,92 +342,52 @@ const cashfreeWebhook = async (req, res) => {
       ? req.body.toString("utf8")
       : "";
 
-    console.log("Webhook signature:", signature);
-    console.log("Webhook timestamp:", timestamp);
-
-    // =================================================
-    // 1. VERIFY SIGNATURE
-    // =================================================
-
-    const isValid = verifyCashfreeWebhookSignature(
-      signature,
-      timestamp,
-      rawBody
-    );
-
-    if (!isValid) {
-      console.error("❌ Invalid Cashfree webhook signature");
-
+    if (
+      !verifyCashfreeWebhookSignature(
+        signature,
+        timestamp,
+        rawBody
+      )
+    ) {
       return res.status(401).json({
         success: false,
         message: "Invalid webhook signature",
       });
     }
 
-    console.log("✅ Cashfree webhook signature verified");
+    let webhookData;
 
-    // =================================================
-    // 2. PARSE WEBHOOK
-    // =================================================
-
-    const webhookData = JSON.parse(rawBody);
-
-    console.log(
-      "Cashfree webhook data:",
-      JSON.stringify(webhookData, null, 2)
-    );
-
-    // =================================================
-    // 3. GET EVENT DETAILS
-    // =================================================
-
-    const eventType =
-      webhookData.type ||
-      webhookData.event_type;
-
-    const cashfreeOrderId =
-      webhookData.data?.order?.order_id;
-
-    const paymentId =
-      webhookData.data?.payment?.cf_payment_id;
-
-    const paymentStatus =
-      webhookData.data?.payment?.payment_status;
-
-    const paymentAmount =
-      webhookData.data?.payment?.payment_amount;
-
-    console.log("Event:", eventType);
-    console.log("Cashfree Order ID:", cashfreeOrderId);
-    console.log("Payment ID:", paymentId);
-    console.log("Payment Status:", paymentStatus);
-    console.log("Payment Amount:", paymentAmount);
-
-    // =================================================
-    // 4. BASIC VALIDATION
-    // =================================================
-
-    if (!cashfreeOrderId) {
-      console.error("❌ Cashfree order ID missing");
-
+    try {
+      webhookData = JSON.parse(rawBody);
+    } catch {
       return res.status(400).json({
         success: false,
-        message: "Cashfree order ID missing",
+        message: "Invalid webhook JSON",
       });
     }
 
-    // =================================================
-    // 5. FIND LOCAL ORDER
-    // =================================================
+    const eventType =
+      webhookData.type || webhookData.event_type || "";
 
-    let order = await Order.findOne({
-      cashfreeOrderId,
-    });
+    const cashfreeOrderId = webhookData.data?.order?.order_id;
+    const payment = webhookData.data?.payment;
+
+    const paymentId = payment?.cf_payment_id;
+    const paymentStatus = payment?.payment_status;
+    const paymentAmount = payment?.payment_amount;
+
+    if (!cashfreeOrderId || !payment) {
+      return res.status(400).json({
+        success: false,
+        message: "Cashfree order/payment details are missing",
+      });
+    }
+
+    const order = await Order.findOne({ cashfreeOrderId });
 
     if (!order) {
       console.error(
-        "❌ Local order not found:",
-        cashfreeOrderId
+        "Cashfree webhook references an unknown local order"
       );
 
       return res.status(404).json({
@@ -239,20 +396,8 @@ const cashfreeWebhook = async (req, res) => {
       });
     }
 
-    console.log(
-      "Local order found:",
-      order._id.toString()
-    );
-
-    // =================================================
-    // 6. VERIFY PAYMENT AMOUNT
-    // =================================================
-
-    if (
-      paymentAmount !== undefined &&
-      Number(paymentAmount) !== Number(order.totalAmount)
-    ) {
-      console.error("❌ Payment amount mismatch");
+    if (!amountsMatch(paymentAmount, order.totalAmount)) {
+      console.error("Cashfree webhook payment amount mismatch");
 
       return res.status(400).json({
         success: false,
@@ -260,173 +405,99 @@ const cashfreeWebhook = async (req, res) => {
       });
     }
 
-    // =================================================
-    // 7. SUCCESS PAYMENT
-    // =================================================
-
-    if (
-      paymentStatus === "SUCCESS" ||
-      eventType === "PAYMENT_SUCCESS_WEBHOOK"
-    ) {
-      // -------------------------------------------------
-      // Idempotency
-      // -------------------------------------------------
-
-      if (order.paymentStatus === "PAID") {
-        console.log(
-          "ℹ️ Order already marked as PAID"
+    // Trust the signed payment status, not the event name alone.
+    if (paymentStatus === "SUCCESS") {
+      if (order.status === "CANCELLED") {
+        console.error(
+          "Successful payment received for a cancelled order"
         );
 
         return res.status(200).json({
           success: true,
-          message: "Payment already processed",
+          message:
+            "Cancelled-order payment requires reconciliation",
         });
       }
 
-      // -------------------------------------------------
-      // Payment + inventory transaction
-      // -------------------------------------------------
-
+      let transitionedToPaid = false;
       const session = await mongoose.startSession();
 
       try {
         await session.withTransaction(async () => {
-          const transactionalOrder = await Order.findById(
+          const currentOrder = await Order.findById(
             order._id
           ).session(session);
 
-          if (!transactionalOrder) {
+          if (!currentOrder) {
             throw new Error("Local order not found");
           }
 
-          // Another webhook may have processed this order
-          // while this webhook was waiting for the transaction.
-          if (
-            transactionalOrder.paymentStatus === "PAID"
-          ) {
-            order = transactionalOrder;
+          if (currentOrder.status === "CANCELLED") {
             return;
           }
 
-          // ---------------------------------------------
-          // Mark payment as paid
-          // ---------------------------------------------
+          if (currentOrder.paymentStatus !== "PAID") {
+            if (!currentOrder.stockReduced) {
+              await reduceStock(currentOrder.items, session);
+              currentOrder.stockReduced = true;
+            }
 
-          transactionalOrder.paymentStatus = "PAID";
+            currentOrder.paymentStatus = "PAID";
+            currentOrder.paymentId =
+              String(paymentId || "") || null;
 
-          transactionalOrder.paymentId =
-            paymentId || null;
-
-          // ---------------------------------------------
-          // Reduce stock only once
-          // ---------------------------------------------
-
-          if (!transactionalOrder.stockReduced) {
-            await reduceStock(
-              transactionalOrder.items,
-              session
-            );
-
-            transactionalOrder.stockReduced = true;
-
-            console.log("✅ Stock reduced");
+            await currentOrder.save({ session });
+            transitionedToPaid = true;
+          } else if (!currentOrder.stockReduced) {
+            await reduceStock(currentOrder.items, session);
+            currentOrder.stockReduced = true;
+            await currentOrder.save({ session });
           }
-
-          // ---------------------------------------------
-          // Save order
-          // ---------------------------------------------
-
-          await transactionalOrder.save({
-            session,
-          });
-
-          order = transactionalOrder;
         });
       } finally {
         await session.endSession();
       }
 
-      // -------------------------------------------------
-      // Populate products for WhatsApp
-      // -------------------------------------------------
-
-      await order.populate(
-        "items.product",
-        "name price"
-      );
-
-      console.log("✅ Order marked as PAID");
-
-      // -------------------------------------------------
-      // WhatsApp confirmation
-      // -------------------------------------------------
-
-      const user = await User.findById(order.user);
-
-      if (user) {
-        const message = buildOrderPlacedMessage(
-          order,
-          user
-        );
-
-        await sendWhatsAppMessage(
-          user.phone,
-          message
-        );
-
-        console.log(
-          "✅ Order confirmation WhatsApp sent"
-        );
+      if (transitionedToPaid) {
+        await notifyPaidOrder(order._id);
       }
 
       return res.status(200).json({
         success: true,
-        message: "Payment processed successfully",
+        message: "Payment success event processed",
       });
     }
 
-    // =================================================
-    // FAILED PAYMENT
-    // =================================================
+    if (
+      ["FAILED", "USER_DROPPED", "CANCELLED", "VOID"].includes(
+        paymentStatus
+      )
+    ) {
+      if (order.paymentStatus === "PAID") {
+        return res.status(200).json({
+          success: true,
+          message:
+            "Ignoring failure event for an already paid order",
+        });
+      }
 
-  if (
-  paymentStatus === "FAILED" ||
-  eventType === "PAYMENT_FAILED_WEBHOOK"
-) {
-  // Never allow a late/duplicate FAILED webhook
-  // to overwrite an already successful payment.
-  if (order.paymentStatus === "PAID") {
-    console.log(
-      "ℹ️ Ignoring FAILED webhook because order is already PAID"
-    );
+      order.paymentStatus = "FAILED";
 
-    return res.status(200).json({
-      success: true,
-      message: "Payment already processed successfully",
-    });
-  }
+      if (paymentId) {
+        order.paymentId = String(paymentId);
+      }
 
-  order.paymentStatus = "FAILED";
+      await order.save();
 
-  if (paymentId) {
-    order.paymentId = paymentId;
-  }
+      return res.status(200).json({
+        success: true,
+        message: "Payment failure event processed",
+      });
+    }
 
-  await order.save();
-
-  console.log("❌ Payment marked as FAILED");
-
-  return res.status(200).json({
-    success: true,
-    message: "Payment failure processed",
-  });
-}
-    // =================================================
-    // OTHER EVENTS
-    // =================================================
-
-    console.log(
-      "ℹ️ Webhook received but no payment state change required"
+    console.info(
+      "Cashfree webhook received; no payment state change required",
+      { eventType, paymentStatus }
     );
 
     return res.status(200).json({
@@ -435,7 +506,7 @@ const cashfreeWebhook = async (req, res) => {
     });
   } catch (error) {
     console.error(
-      "Webhook processing error:",
+      "Cashfree webhook processing error:",
       error.message
     );
 
@@ -446,12 +517,9 @@ const cashfreeWebhook = async (req, res) => {
   }
 };
 
-// =====================================================
-// EXPORTS
-// =====================================================
-
 export {
   createTestPayment,
   verifyTestPayment,
+  verifyMyOrderPayment,
   cashfreeWebhook,
 };
