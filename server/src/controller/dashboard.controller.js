@@ -36,10 +36,14 @@ const getTodayDashboard = async (req, res) => {
     // =====================================================
 
     const todaySales = orders
-      .filter((order) => order.status !== "CANCELLED")
-      .reduce((total, order) => {
-        return total + order.totalAmount;
-      }, 0);
+  .filter(
+    (order) =>
+      order.status !== "CANCELLED" &&
+      order.paymentStatus === "PAID"
+  )
+  .reduce((total, order) => {
+    return total + Number(order.totalAmount || 0);
+  }, 0);
 
     // =====================================================
     // PENDING ORDERS

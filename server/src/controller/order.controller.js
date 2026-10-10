@@ -5,6 +5,10 @@ import Product from "../model/product.model.js";
 import User from "../model/user.model.js";
 import sendOrderEmail from "../services/email.service.js";
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
+import {
+  emitOrderCreated,
+  emitOrderUpdated,
+} from "../services/realtime.service.js";
 
 import {
   buildOrderPlacedMessage,
@@ -166,6 +170,7 @@ const createOrder = async (req, res) => {
       }
 
       await order.populate("items.product", "name price");
+      emitOrderCreated(order);
 
       // WhatsApp failure must not fail an already-created order.
       try {
@@ -406,6 +411,7 @@ const createPOSOrder = async (req, res) => {
     }
 
     await order.populate("items.product", "name price");
+    emitOrderCreated(order);
 
     try {
       if (customer.phone) {
@@ -573,7 +579,13 @@ const updateOrderStatus = async (req, res) => {
         }
 
         order.status = status;
-        await order.save({ session });
+
+// COD payment is considered collected when delivery is completed.
+if (status === "DELIVERED" && order.paymentMethod === "COD") {
+  order.paymentStatus = "PAID";
+}
+
+await order.save({ session });
 
         updatedOrder = order;
         changed = true;
@@ -601,6 +613,9 @@ const updateOrderStatus = async (req, res) => {
     }
 
     await updatedOrder.populate("items.product", "name image price");
+
+    // Broadcast the committed status/payment update to connected clients.
+    emitOrderUpdated(updatedOrder);
 
     // 6. Load customer for both notifications.
     let notificationUser = null;
@@ -751,6 +766,9 @@ const cancelMyOrder = async (req, res) => {
       "name image price"
     );
 
+    // Notify the admin dashboard and this customer about cancellation.
+    emitOrderUpdated(cancelledOrder);
+
     return res.status(200).json({
       success: true,
       message: "Your COD order has been cancelled successfully",
@@ -849,5 +867,6 @@ export {
   getAllOrders,
   updateOrderStatus,
   getMyOrders,
-  getOrderById, cancelMyOrder,
+  getOrderById,
+  cancelMyOrder,
 };

@@ -13,8 +13,14 @@ import dashboardRoute from "./routes/dashboard.route.js";
 import paymentRoute from "./routes/payment.route.js";
 import paymentWebhookRoute from "./routes/payment.webhook.route.js";
 import uploadRoutes from "./routes/upload.route.js";
+import http from "http";
+import { initializeRealtime } from "./services/realtime.service.js";
+
 
 const app = express();
+
+const httpServer = http.createServer(app);
+initializeRealtime(httpServer);
 
 /*
 |--------------------------------------------------------------------------
@@ -87,9 +93,9 @@ const startserver = async () => {
   try {
     await connectDB();
 
-    app.listen(PORT, () => {
-      console.log("server running on port " + PORT);
-    });
+  httpServer.listen(PORT, () => {
+  console.log("server running on port " + PORT);
+});
   } catch (error) {
     console.error("Failed to start server:", error.message);
   }

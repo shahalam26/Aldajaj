@@ -1,13 +1,19 @@
+
 import User from "../model/user.model.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import OTP from "../model/otp.model.js";
 
 import {
   normalizePhone,
   isValidPhone,
 } from "../utils/phone.util.js";
+
+import {
+  sendProviderOTP,
+  verifyProviderOTP,
+} from "../services/messageCentral.service.js";
+
 
 const generateToken = (user) => {
   return jwt.sign(
@@ -208,77 +214,55 @@ const adminLogin = async (req, res) => {
     });
   }
 };
+
 const requestOTP = async (req, res) => {
   try {
     const normalizedPhone = normalizePhone(req.body.phone);
 
-    if (!normalizedPhone) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number is required",
-      });
-    }
-
-    if (!isValidPhone(normalizedPhone)) {
+    if (!normalizedPhone || !isValidPhone(normalizedPhone)) {
       return res.status(400).json({
         success: false,
         message: "Please enter a valid phone number",
       });
     }
 
-    // Remove previous login OTPs for this phone
+    // Remove any previous login OTP request for this phone.
     await OTP.deleteMany({
       phone: normalizedPhone,
       purpose: "LOGIN",
     });
 
-    // Generate 6-digit OTP
-    const otp = crypto
-      .randomInt(100000, 1000000)
-      .toString();
+    // Ask Message Central to generate and send the OTP.
+    const {
+      verificationId,
+      timeoutSeconds,
+    } = await sendProviderOTP(normalizedPhone);
 
-    // Hash OTP before storing in database
-    const otpHash = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
-
-    // OTP valid for 5 minutes
     const expiresAt = new Date(
-      Date.now() + 5 * 60 * 1000
+      Date.now() + timeoutSeconds * 1000
     );
 
-    // Save hashed OTP
     await OTP.create({
       phone: normalizedPhone,
-      otpHash,
+      verificationId,
       expiresAt,
       purpose: "LOGIN",
     });
 
-    // ==========================================
-    // DEVELOPMENT MODE ONLY
-    // ==========================================
-    console.log("\n================================");
-    console.log("📱 LOGIN OTP");
-    console.log(`Phone: ${normalizedPhone}`);
-    console.log(`OTP: ${otp}`);
-    console.log("Valid for: 5 minutes");
-    console.log("================================\n");
-
     return res.status(200).json({
       success: true,
-      message: "OTP generated successfully",
+      message: "OTP sent successfully",
     });
   } catch (error) {
-    console.error("requestOTP error:", error);
+    console.error("requestOTP error:", error.message);
 
-    return res.status(500).json({
+    return res.status(502).json({
       success: false,
-      message: error.message,
+      message: "Could not send OTP. Please try again.",
     });
   }
 };
+
 
 const verifyOTP = async (req, res) => {
   try {
@@ -306,81 +290,75 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    const otpHash = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
-
-    /*
-     * Atomic OTP consumption.
-     *
-     * The matching OTP is deleted in the same database
-     * operation that verifies it. Therefore two concurrent
-     * requests cannot successfully consume the same OTP.
-     */
-    const consumedOTP = await OTP.findOneAndDelete({
+    const pendingOTP = await OTP.findOne({
       phone: normalizedPhone,
       purpose: "LOGIN",
-      otpHash,
-      expiresAt: {
-        $gt: new Date(),
-      },
-      attempts: {
-        $lt: 5,
-      },
-    });
+      expiresAt: { $gt: new Date() },
+    }).sort({ createdAt: -1 });
 
-    if (!consumedOTP) {
-      const existingOTP = await OTP.findOne({
+    if (!pendingOTP) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP not found or expired. Request a new OTP.",
+      });
+    }
+
+    // Enforce the local failed-attempt limit.
+    if (pendingOTP.attempts >= 5) {
+      await OTP.deleteMany({
         phone: normalizedPhone,
         purpose: "LOGIN",
       });
 
-      if (!existingOTP) {
-        return res.status(400).json({
-          success: false,
-          message: "OTP not found or expired",
-        });
-      }
+      return res.status(429).json({
+        success: false,
+        message: "Too many incorrect attempts. Request a new OTP.",
+      });
+    }
 
-      if (existingOTP.expiresAt <= new Date()) {
-        await OTP.deleteOne({
-          _id: existingOTP._id,
-        });
+    let isVerified = false;
 
-        return res.status(400).json({
-          success: false,
-          message: "OTP expired",
-        });
-      }
-
-      if (existingOTP.attempts >= 5) {
-        await OTP.deleteOne({
-          _id: existingOTP._id,
-        });
-
-        return res.status(429).json({
-          success: false,
-          message: "Too many incorrect attempts",
-        });
-      }
-
-      await OTP.updateOne(
-        {
-          _id: existingOTP._id,
-        },
-        {
-          $inc: {
-            attempts: 1,
-          },
-        }
+    try {
+      isVerified = await verifyProviderOTP({
+        verificationId: pendingOTP.verificationId,
+        code: otp,
+      });
+    } catch (providerError) {
+      // Do not consume a valid pending request on a provider outage.
+      console.error(
+        "Message Central verification error:",
+        providerError.message
       );
+
+      return res.status(502).json({
+        success: false,
+        message: "OTP verification service is temporarily unavailable.",
+      });
+    }
+
+    if (!isVerified) {
+      pendingOTP.attempts += 1;
+
+      if (pendingOTP.attempts >= 5) {
+        await OTP.deleteMany({
+          phone: normalizedPhone,
+          purpose: "LOGIN",
+        });
+      } else {
+        await pendingOTP.save();
+      }
 
       return res.status(401).json({
         success: false,
         message: "Invalid OTP",
       });
     }
+
+    // Consume the verified request before issuing a session.
+    await OTP.deleteMany({
+      phone: normalizedPhone,
+      purpose: "LOGIN",
+    });
 
     let user = await User.findOne({
       phone: normalizedPhone,
@@ -412,12 +390,15 @@ const verifyOTP = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("verifyOTP error:", error.message);
+
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "OTP verification failed",
     });
   }
 };
+
 
 export {
   registerUser,

@@ -9,7 +9,7 @@ const otpSchema = new mongoose.Schema(
       index: true,
     },
 
-    otpHash: {
+    verificationId: {
       type: String,
       required: true,
     },

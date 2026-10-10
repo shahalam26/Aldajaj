@@ -10,6 +10,7 @@ import { reduceStock } from "../services/inventory.service.js";
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
 import sendOrderEmail from "../services/email.service.js";
 import { buildOrderPlacedMessage } from "../services/orderMessage.service.js";
+import { emitOrderCreated } from "../services/realtime.service.js";
 
 const amountsMatch = (a, b) => {
   const first = Number(a);
@@ -22,6 +23,8 @@ const amountsMatch = (a, b) => {
   );
 };
 
+// Runs only after successful payment confirmation.
+// Admin realtime notification is independent of WhatsApp/email.
 const notifyPaidOrder = async (orderId) => {
   let order;
   let user;
@@ -34,6 +37,18 @@ const notifyPaidOrder = async (orderId) => {
 
     if (!order) return;
 
+    if (
+      order.paymentMethod === "ONLINE" &&
+      order.paymentStatus === "PAID"
+    ) {
+      emitOrderCreated(order);
+
+      console.log(
+        "Online order realtime event emitted:",
+        order._id.toString()
+      );
+    }
+
     user = await User.findById(order.user);
 
     if (!user) return;
@@ -45,7 +60,6 @@ const notifyPaidOrder = async (orderId) => {
     return;
   }
 
-  // WhatsApp and email are independent best-effort notifications.
   if (user.phone) {
     try {
       const message = buildOrderPlacedMessage(order, user);
@@ -58,7 +72,14 @@ const notifyPaidOrder = async (orderId) => {
     }
   }
 
-  await sendOrderEmail(order, user, "payment");
+  try {
+    await sendOrderEmail(order, user, "payment");
+  } catch (error) {
+    console.error(
+      "Paid-order email notification failed:",
+      error.message
+    );
+  }
 };
 
 /**
@@ -178,6 +199,7 @@ const verifyMyOrderPayment = async (req, res) => {
         await session.endSession();
       }
 
+      // Emit only when this request transitions the order to PAID.
       if (transitionedToPaid) {
         await notifyPaidOrder(order._id);
       }
@@ -476,6 +498,7 @@ const cashfreeWebhook = async (req, res) => {
         await session.endSession();
       }
 
+      // Notify only after successful payment transition.
       if (transitionedToPaid) {
         await notifyPaidOrder(order._id);
       }

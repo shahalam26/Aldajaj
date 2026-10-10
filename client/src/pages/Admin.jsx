@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { connectRealtime } from "../services/realtime";
 
 const emptyProduct = {
   name: "",
@@ -197,6 +198,7 @@ export default function Admin({ navigate }) {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [message, setMessage] = useState("");
+  const [liveNotice, setLiveNotice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
 
@@ -221,9 +223,9 @@ export default function Admin({ navigate }) {
   const [posCreating, setPosCreating] = useState(false);
   const [posReceipt, setPosReceipt] = useState(null);
 
-  const load = async () => {
+  const load = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const [d, p, o] = await Promise.all([
         api("/dashboard/today"),
         api("/products/inventory"),
@@ -242,7 +244,7 @@ export default function Admin({ navigate }) {
     } catch (error) {
       setMessage(error.message || "Failed to load admin data.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -253,6 +255,54 @@ export default function Admin({ navigate }) {
     }
     load();
   }, [user]);
+
+  // Keep the admin dashboard synchronized without a manual page refresh.
+  useEffect(() => {
+    if (user?.role !== "admin") return undefined;
+
+    const socket = connectRealtime();
+
+    if (!socket) return undefined;
+
+    const handleNewOrder = (event) => {
+      const orderId = String(event?.orderId || "")
+        .slice(-8)
+        .toUpperCase();
+      const amount = Number(event?.totalAmount || 0).toLocaleString("en-IN");
+
+      setLiveNotice({
+        id: `${event?.orderId || "order"}-${Date.now()}`,
+        title: "New order received",
+        detail: `Order #${orderId} · ₹${amount}`,
+      });
+
+      // Refresh data quietly; don't block the admin UI.
+      void load(true);
+    };
+
+    const handleOrderUpdated = () => {
+      void load(true);
+    };
+
+    socket.on("order:new", handleNewOrder);
+    socket.on("order:updated", handleOrderUpdated);
+
+    return () => {
+      socket.off("order:new", handleNewOrder);
+      socket.off("order:updated", handleOrderUpdated);
+      socket.disconnect();
+    };
+  }, [user?.role]);
+
+  useEffect(() => {
+    if (!liveNotice) return undefined;
+
+    const timeoutId = window.setTimeout(() => {
+      setLiveNotice(null);
+    }, 8000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [liveNotice?.id]);
 
   const resetProductForm = () => {
     imagePreviews.forEach((item) => {
@@ -736,14 +786,20 @@ export default function Admin({ navigate }) {
     }
   };
 
-  const totalRevenue = useMemo(
-    () =>
-      orders.reduce(
+ const totalRevenue = useMemo(
+  () =>
+    orders
+      .filter(
+        (order) =>
+          order.status !== "CANCELLED" &&
+          order.paymentStatus === "PAID"
+      )
+      .reduce(
         (sum, order) => sum + Number(order.totalAmount || 0),
         0
       ),
-    [orders]
-  );
+  [orders]
+);
 
   const lowStockProducts = useMemo(
     () => products.filter((product) => Number(product.stock) <= 0),
@@ -923,6 +979,46 @@ export default function Admin({ navigate }) {
 
         {/* MAIN */}
         <main className="min-w-0 flex-1 px-4 pb-10 sm:px-6 lg:px-9">
+
+          {liveNotice && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="fixed right-4 top-4 z-[100] flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl border border-emerald-200 bg-white p-4 shadow-xl"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-lg">
+                🔔
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-black text-black">
+                  {liveNotice.title}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-black/60">
+                  {liveNotice.detail}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTab("orders");
+                    setLiveNotice(null);
+                  }}
+                  className="mt-3 text-xs font-black text-[#c62828]"
+                >
+                  View orders →
+                </button>
+              </div>
+
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={() => setLiveNotice(null)}
+                className="rounded-lg px-1 text-lg leading-none text-black/40 hover:text-black"
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {/* TOP BAR */}
           <header className="hidden h-[88px] items-center justify-between lg:flex">
