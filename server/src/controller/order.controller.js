@@ -661,6 +661,115 @@ const updateOrderStatus = async (req, res) => {
 };
 
 // =====================================================
+// CANCEL MY COD ORDER - CUSTOMER
+// Customer can cancel only their own online COD order
+// while its status is PLACED.
+// =====================================================
+const cancelMyOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID",
+      });
+    }
+
+    let cancelledOrder;
+    const session = await mongoose.startSession();
+
+    try {
+      await session.withTransaction(async () => {
+        const order = await Order.findOne({
+          _id: id,
+          user: req.user._id,
+        }).session(session);
+
+        if (!order) {
+          const error = new Error("Order not found");
+          error.statusCode = 404;
+          throw error;
+        }
+
+        // Customer cancellation is only for online COD orders.
+        if (
+          order.orderSource !== "ONLINE" ||
+          order.paymentMethod !== "COD"
+        ) {
+          const error = new Error(
+            "Only online cash-on-delivery orders can be cancelled here"
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        // Once accepted, customer must contact the store.
+        if (order.status !== "PLACED") {
+          const error = new Error(
+            "This order can no longer be cancelled online. Please contact the store."
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        if (order.paymentStatus === "PAID") {
+          const error = new Error(
+            "This order is marked as paid and cannot be cancelled online"
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        // Restore stock only if it was actually deducted.
+        // Negative stock remains allowed by the existing business rules.
+        if (order.stockReduced) {
+          await increaseStock(order.items, session);
+          order.stockReduced = false;
+        }
+
+        order.status = "CANCELLED";
+        await order.save({ session });
+
+        cancelledOrder = order;
+      });
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+
+    await cancelledOrder.populate(
+      "items.product",
+      "name image price"
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Your COD order has been cancelled successfully",
+      order: cancelledOrder,
+    });
+  } catch (error) {
+    console.error(
+      "Cancel customer order error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to cancel order right now",
+    });
+  }
+};
+
+// =====================================================
 // GET MY ORDERS - CUSTOMER
 // =====================================================
 const getMyOrders = async (req, res) => {
@@ -740,5 +849,5 @@ export {
   getAllOrders,
   updateOrderStatus,
   getMyOrders,
-  getOrderById,
+  getOrderById, cancelMyOrder,
 };
