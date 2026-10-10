@@ -72,12 +72,11 @@ const userSchema = new mongoose.Schema(
 },
 
     email: {
-      type: String,
-      lowercase: true,
-      trim: true,
-      default: "",
-    },
-
+  type: String,
+  lowercase: true,
+  trim: true,
+  default: undefined,
+},
     phone: {
       type: String,
       required: true,

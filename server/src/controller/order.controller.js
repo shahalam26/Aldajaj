@@ -1,9 +1,9 @@
-import mongoose from "mongoose";
 
+import mongoose from "mongoose";
 import Order from "../model/order.model.js";
 import Product from "../model/product.model.js";
 import User from "../model/user.model.js";
-
+import sendOrderEmail from "../services/email.service.js";
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
 
 import {
@@ -19,7 +19,6 @@ import {
 // =====================================================
 // CREATE ONLINE ORDER
 // =====================================================
-
 const createOrder = async (req, res) => {
   try {
     const { items, paymentMethod, addressId } = req.body;
@@ -66,7 +65,6 @@ const createOrder = async (req, res) => {
     }
 
     const productIds = items.map((item) => item.product);
-
     const uniqueProductIds = new Set(productIds);
 
     if (uniqueProductIds.size !== productIds.length) {
@@ -124,10 +122,8 @@ const createOrder = async (req, res) => {
     // COD
     // Order creation + inventory deduction = one transaction
     // =====================================================
-
     if (paymentMethod === "COD") {
       const session = await mongoose.startSession();
-
       let order;
 
       try {
@@ -136,9 +132,7 @@ const createOrder = async (req, res) => {
             [
               {
                 user: req.user._id,
-
                 items: orderItems,
-
                 deliveryAddress: {
                   label: selectedAddress.label,
                   addressLine: selectedAddress.addressLine,
@@ -149,15 +143,10 @@ const createOrder = async (req, res) => {
                   latitude: selectedAddress.latitude,
                   longitude: selectedAddress.longitude,
                 },
-
                 totalAmount,
-
                 paymentMethod,
-
                 paymentStatus: "PENDING",
-
                 stockReduced: false,
-
                 orderSource: "ONLINE",
               },
             ],
@@ -166,13 +155,10 @@ const createOrder = async (req, res) => {
 
           order = order[0];
 
-          // IMPORTANT:
-          // Stock is NOT used to reject the order.
-          // reduceStock() may result in negative stock.
+          // Inventory does not block ordering.
           await reduceStock(orderItems, session);
 
           order.stockReduced = true;
-
           await order.save({ session });
         });
       } finally {
@@ -181,9 +167,21 @@ const createOrder = async (req, res) => {
 
       await order.populate("items.product", "name price");
 
-      const message = buildOrderPlacedMessage(order, user);
+      // WhatsApp failure must not fail an already-created order.
+      try {
+        if (user.phone) {
+          const message = buildOrderPlacedMessage(order, user);
+          await sendWhatsAppMessage(user.phone, message);
+        }
+      } catch (notificationError) {
+        console.error(
+          "COD order WhatsApp notification failed:",
+          notificationError.message
+        );
+      }
 
-      await sendWhatsAppMessage(user.phone, message);
+      // Email is optional and failure-safe.
+      await sendOrderEmail(order, user, "placed");
 
       return res.status(201).json({
         success: true,
@@ -194,13 +192,11 @@ const createOrder = async (req, res) => {
 
     // =====================================================
     // ONLINE PAYMENT
+    // Email is sent after payment is confirmed, not here.
     // =====================================================
-
     const order = await Order.create({
       user: req.user._id,
-
       items: orderItems,
-
       deliveryAddress: {
         label: selectedAddress.label,
         addressLine: selectedAddress.addressLine,
@@ -211,15 +207,10 @@ const createOrder = async (req, res) => {
         latitude: selectedAddress.latitude,
         longitude: selectedAddress.longitude,
       },
-
       totalAmount,
-
       paymentMethod,
-
       paymentStatus: "PENDING",
-
       stockReduced: false,
-
       orderSource: "ONLINE",
     });
 
@@ -235,7 +226,6 @@ const createOrder = async (req, res) => {
       });
 
       order.cashfreeOrderId = cashfreeOrder.order_id;
-
       await order.save();
 
       return res.status(201).json({
@@ -276,7 +266,6 @@ const createOrder = async (req, res) => {
 // =====================================================
 // CREATE POS ORDER
 // =====================================================
-
 const createPOSOrder = async (req, res) => {
   try {
     const {
@@ -329,7 +318,6 @@ const createPOSOrder = async (req, res) => {
     }
 
     const productIds = items.map((item) => item.product);
-
     const uniqueProductIds = new Set(productIds);
 
     if (uniqueProductIds.size !== productIds.length) {
@@ -384,7 +372,6 @@ const createPOSOrder = async (req, res) => {
     }
 
     const session = await mongoose.startSession();
-
     let order;
 
     try {
@@ -393,23 +380,13 @@ const createPOSOrder = async (req, res) => {
           [
             {
               user: customer._id,
-
               items: orderItems,
-
-              deliveryAddress:
-                deliveryAddress || undefined,
-
+              deliveryAddress: deliveryAddress || undefined,
               totalAmount,
-
               paymentMethod,
-
               orderSource: "POS",
-
               paymentStatus:
-                paymentMethod === "COD"
-                  ? "PAID"
-                  : "PENDING",
-
+                paymentMethod === "COD" ? "PAID" : "PENDING",
               stockReduced: false,
             },
           ],
@@ -418,12 +395,10 @@ const createPOSOrder = async (req, res) => {
 
         order = createdOrders[0];
 
-        // IMPORTANT:
-        // Stock does NOT block POS orders.
+        // Stock does not block POS orders.
         await reduceStock(orderItems, session);
 
         order.stockReduced = true;
-
         await order.save({ session });
       });
     } finally {
@@ -432,15 +407,19 @@ const createPOSOrder = async (req, res) => {
 
     await order.populate("items.product", "name price");
 
-    const message = buildOrderPlacedMessage(
-      order,
-      customer
-    );
+    try {
+      if (customer.phone) {
+        const message = buildOrderPlacedMessage(order, customer);
+        await sendWhatsAppMessage(customer.phone, message);
+      }
+    } catch (notificationError) {
+      console.error(
+        "POS order WhatsApp notification failed:",
+        notificationError.message
+      );
+    }
 
-    await sendWhatsAppMessage(
-      customer.phone,
-      message
-    );
+    await sendOrderEmail(order, customer, "placed");
 
     return res.status(201).json({
       success: true,
@@ -460,7 +439,6 @@ const createPOSOrder = async (req, res) => {
 // =====================================================
 // GET ALL ORDERS - ADMIN
 // =====================================================
-
 const getAllOrders = async (req, res) => {
   try {
     const orders = await Order.find()
@@ -483,12 +461,20 @@ const getAllOrders = async (req, res) => {
 // =====================================================
 // UPDATE ORDER STATUS - ADMIN
 // =====================================================
-
 const updateOrderStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
+    // 1. Validate order ID
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid order ID",
+      });
+    }
+
+    // 2. Validate requested status
     const allowedStatuses = [
       "PLACED",
       "ACCEPTED",
@@ -499,34 +485,14 @@ const updateOrderStatus = async (req, res) => {
       "CANCELLED",
     ];
 
-    if (!status || !allowedStatuses.includes(status)) {
+    if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Invalid order status",
       });
     }
 
-    const order = await Order.findById(id);
-
-    if (!order) {
-      return res.status(404).json({
-        success: false,
-        message: "Order not found",
-      });
-    }
-
-    if (
-      status === "ACCEPTED" &&
-      order.paymentMethod === "ONLINE" &&
-      order.paymentStatus !== "PAID"
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Online order cannot be accepted before payment is successful",
-      });
-    }
-
+    // 3. Define valid order lifecycle transitions
     const allowedTransitions = {
       PLACED: ["ACCEPTED", "CANCELLED"],
       ACCEPTED: ["PROCESSING", "CANCELLED"],
@@ -537,60 +503,149 @@ const updateOrderStatus = async (req, res) => {
       CANCELLED: [],
     };
 
-    if (!allowedTransitions[order.status].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          `Cannot change order status from ${order.status} to ${status}`,
+    let updatedOrder;
+    let changed = false;
+
+    // 4. Update order and inventory atomically
+    const session = await mongoose.startSession();
+
+    try {
+      await session.withTransaction(async () => {
+        const order = await Order.findById(id).session(session);
+
+        if (!order) {
+          const error = new Error("Order not found");
+          error.statusCode = 404;
+          throw error;
+        }
+
+        // Prevent duplicate status updates and notifications.
+        if (order.status === status) {
+          updatedOrder = order;
+          return;
+        }
+
+        // Reject invalid lifecycle transitions.
+        if (!allowedTransitions[order.status]?.includes(status)) {
+          const error = new Error(
+            `Cannot change order status from ${order.status} to ${status}`
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        // Online orders must be paid before acceptance.
+        if (
+          status === "ACCEPTED" &&
+          order.paymentMethod === "ONLINE" &&
+          order.paymentStatus !== "PAID"
+        ) {
+          const error = new Error(
+            "Online order cannot be accepted before payment is successful"
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        // Never cancel a pending online payment.
+        if (
+          status === "CANCELLED" &&
+          order.paymentMethod === "ONLINE" &&
+          order.paymentStatus !== "FAILED"
+        ) {
+          const error = new Error(
+            order.paymentStatus === "PAID"
+              ? "This online order is already paid. Complete the refund workflow before cancelling it."
+              : "Online payment is not confirmed as failed. Verify the payment before cancelling this order."
+          );
+          error.statusCode = 409;
+          throw error;
+        }
+
+        // Restore stock only when it was previously deducted.
+        if (
+          status === "CANCELLED" &&
+          order.stockReduced &&
+          ["PLACED", "ACCEPTED"].includes(order.status)
+        ) {
+          await increaseStock(order.items, session);
+          order.stockReduced = false;
+        }
+
+        order.status = status;
+        await order.save({ session });
+
+        updatedOrder = order;
+        changed = true;
+      });
+    } catch (error) {
+      if (error.statusCode) {
+        return res.status(error.statusCode).json({
+          success: false,
+          message: error.message,
+        });
+      }
+
+      throw error;
+    } finally {
+      await session.endSession();
+    }
+
+    // 5. Skip duplicate notifications if nothing changed.
+    if (!changed) {
+      return res.status(200).json({
+        success: true,
+        message: "Order already has this status",
+        order: updatedOrder,
       });
     }
 
-    if (
-      status === "CANCELLED" &&
-      order.stockReduced &&
-      (
-        order.status === "PLACED" ||
-        order.status === "ACCEPTED"
-      )
-    ) {
-      const session = await mongoose.startSession();
+    await updatedOrder.populate("items.product", "name image price");
 
+    // 6. Load customer for both notifications.
+    let notificationUser = null;
+
+    try {
+      notificationUser = await User.findById(updatedOrder.user);
+    } catch (notificationError) {
+      console.error(
+        "Could not load order customer for notifications:",
+        notificationError.message
+      );
+    }
+
+    // WhatsApp must not undo a successful status update.
+    if (notificationUser?.phone) {
       try {
-        await session.withTransaction(async () => {
-          await increaseStock(order.items, session);
+        const message = buildOrderStatusMessage(
+          updatedOrder,
+          notificationUser
+        );
 
-          order.stockReduced = false;
-          order.status = status;
-
-          await order.save({ session });
-        });
-      } finally {
-        await session.endSession();
+        await sendWhatsAppMessage(
+          notificationUser.phone,
+          message
+        );
+      } catch (notificationError) {
+        console.error(
+          "Order status WhatsApp notification failed:",
+          notificationError.message
+        );
       }
-    } else {
-      order.status = status;
-
-      await order.save();
     }
 
-    const user = await User.findById(order.user);
+    // Email is optional and failure-safe.
+    await sendOrderEmail(
+      updatedOrder,
+      notificationUser,
+      "status"
+    );
 
-    if (user) {
-      const message = buildOrderStatusMessage(
-        order,
-        user
-      );
-
-      await sendWhatsAppMessage(
-        user.phone,
-        message
-      );
-    }
-
+    // 7. Return updated order.
     return res.status(200).json({
       success: true,
       message: "Order status updated successfully",
-      order,
+      order: updatedOrder,
     });
   } catch (error) {
     console.error(
@@ -600,7 +655,7 @@ const updateOrderStatus = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Failed to update order status",
     });
   }
 };
@@ -608,7 +663,6 @@ const updateOrderStatus = async (req, res) => {
 // =====================================================
 // GET MY ORDERS - CUSTOMER
 // =====================================================
-
 const getMyOrders = async (req, res) => {
   try {
     const orders = await Order.find({
@@ -632,12 +686,11 @@ const getMyOrders = async (req, res) => {
 // =====================================================
 // GET SINGLE ORDER - CUSTOMER TRACKING
 // =====================================================
-
 const getOrderById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Validate MongoDB ObjectId before querying
+    // Validate MongoDB ObjectId before querying.
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
         success: false,
@@ -645,7 +698,6 @@ const getOrderById = async (req, res) => {
       });
     }
 
-    // IMPORTANT:
     // Customer can only access their own order.
     const order = await Order.findOne({
       _id: id,
@@ -682,7 +734,6 @@ const getOrderById = async (req, res) => {
 // =====================================================
 // EXPORTS
 // =====================================================
-
 export {
   createOrder,
   createPOSOrder,

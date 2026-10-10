@@ -213,7 +213,13 @@ export default function Admin({ navigate }) {
 
   const [phone, setPhone] = useState("");
   const [customer, setCustomer] = useState(null);
+  const [customerName, setCustomerName] = useState("");
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+  const [lookingUpCustomer, setLookingUpCustomer] = useState(false);
   const [cart, setCart] = useState([]);
+  const [posCreating, setPosCreating] = useState(false);
+  const [posReceipt, setPosReceipt] = useState(null);
 
   const load = async () => {
     try {
@@ -532,18 +538,93 @@ export default function Admin({ navigate }) {
     }
   };
 
+  const normalizePosPhone = (value) => {
+    let normalized = String(value || "").trim().replace(/[\s()-]/g, "");
+
+    if (normalized.startsWith("+91")) {
+      normalized = normalized.slice(3);
+    } else if (normalized.startsWith("91") && normalized.length === 12) {
+      normalized = normalized.slice(2);
+    } else if (normalized.startsWith("0") && normalized.length === 11) {
+      normalized = normalized.slice(1);
+    }
+
+    return normalized;
+  };
+
   const lookup = async () => {
-    if (!phone.trim()) return setMessage("Enter customer phone number.");
+    const normalizedPhone = normalizePosPhone(phone);
+
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      setCustomer(null);
+      setShowCreateCustomer(false);
+      return setMessage("Enter a valid 10-digit Indian mobile number.");
+    }
+
+    setLookingUpCustomer(true);
+    setCustomer(null);
+    setShowCreateCustomer(false);
+    setMessage("");
 
     try {
       const data = await api(
-        `/users/customer?phone=${encodeURIComponent(phone)}`
+        `/users/customer?phone=${encodeURIComponent(normalizedPhone)}`
       );
-      setCustomer(data.customer);
+      setPhone(normalizedPhone);
+      setCustomer({ ...data.customer, _id: data.customer?._id || data.customer?.id });
       setMessage("Customer found.");
     } catch (error) {
       setCustomer(null);
-      setMessage(error.message);
+
+      if (error.status === 404) {
+        setPhone(normalizedPhone);
+        setCustomerName("");
+        setShowCreateCustomer(true);
+        setMessage("Customer not found. Add their name to create a customer.");
+      } else {
+        setMessage(error.message || "Could not look up customer.");
+      }
+    } finally {
+      setLookingUpCustomer(false);
+    }
+  };
+
+  const createPOSCustomer = async () => {
+    const normalizedPhone = normalizePosPhone(phone);
+    const trimmedName = customerName.trim();
+
+    if (!trimmedName) return setMessage("Enter the customer's name.");
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      return setMessage("Enter a valid 10-digit Indian mobile number.");
+    }
+    if (creatingCustomer) return;
+
+    try {
+      setCreatingCustomer(true);
+      setMessage("");
+
+      const data = await api("/users/customer", {
+        method: "POST",
+        body: JSON.stringify({ name: trimmedName, phone: normalizedPhone }),
+      });
+
+      const createdCustomer = data.customer;
+      setPhone(normalizedPhone);
+      setCustomer({
+        ...createdCustomer,
+        _id: createdCustomer?._id || createdCustomer?.id,
+      });
+      setShowCreateCustomer(false);
+      setCustomerName("");
+      setMessage("Customer created. You can now place the bill.");
+    } catch (error) {
+      if (error.status === 409) {
+        setMessage("This phone number already exists. Click Find to load that customer.");
+      } else {
+        setMessage(error.message || "Could not create customer.");
+      }
+    } finally {
+      setCreatingCustomer(false);
     }
   };
 
@@ -570,11 +651,38 @@ export default function Admin({ navigate }) {
       ];
     });
 
+  const posChangeQuantity = (productId, change) => {
+    setCart((currentCart) =>
+      currentCart
+        .map((item) =>
+          item.product === productId
+            ? { ...item, quantity: item.quantity + change }
+            : item
+        )
+        .filter((item) => item.quantity > 0)
+    );
+  };
+
+  const posRemoveItem = (productId) => {
+    setCart((currentCart) =>
+      currentCart.filter((item) => item.product !== productId)
+    );
+  };
+
+  const posClearCart = () => {
+    setCart([]);
+    setMessage("Current bill cleared.");
+  };
+
   const posCreate = async () => {
     if (!customer) return setMessage("Select customer first.");
     if (!cart.length) return setMessage("Add products to the bill.");
+    if (posCreating) return;
 
     try {
+      setPosCreating(true);
+      setMessage("");
+
       const data = await api("/orders/pos", {
         method: "POST",
         body: JSON.stringify({
@@ -587,13 +695,44 @@ export default function Admin({ navigate }) {
         }),
       });
 
-      setMessage(
-        `POS order created: ${data.order?._id?.slice(-8) || "Success"}`
-      );
+      const order = data.order || {};
+      const receiptItems = Array.isArray(order.items) && order.items.length
+        ? order.items.map((item) => {
+            const productId = typeof item.product === "object"
+              ? item.product?._id
+              : item.product;
+            const cartItem = cart.find((entry) => entry.product === productId);
+            return {
+              name: (typeof item.product === "object" && item.product?.name) || cartItem?.name || "Product",
+              price: Number(item.price ?? cartItem?.price ?? 0),
+              quantity: Number(item.quantity || 0),
+            };
+          })
+        : cart.map((item) => ({
+            name: item.name,
+            price: Number(item.price || 0),
+            quantity: Number(item.quantity || 0),
+          }));
+
+      setPosReceipt({
+        orderId: order._id || "",
+        createdAt: order.createdAt || new Date().toISOString(),
+        customer: {
+          name: customer.name || "Customer",
+          phone: customer.phone || phone,
+        },
+        items: receiptItems,
+        totalAmount: Number(order.totalAmount ?? cartTotal),
+        paymentMethod: order.paymentMethod || "COD",
+      });
+
+      setMessage(`POS order created: ${order._id?.slice(-8) || "Success"}`);
       setCart([]);
       await load();
     } catch (error) {
-      setMessage(error.message);
+      setMessage(error.message || "Failed to create POS order.");
+    } finally {
+      setPosCreating(false);
     }
   };
 
@@ -1785,16 +1924,28 @@ export default function Admin({ navigate }) {
                       </span>
                       <input
                         value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
+                        onChange={(e) => {
+                          setPhone(e.target.value);
+                          setCustomer(null);
+                          setShowCreateCustomer(false);
+                          setCustomerName("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") lookup();
+                        }}
+                        inputMode="tel"
+                        autoComplete="tel"
                         placeholder="Customer phone"
                         className="w-full rounded-2xl border border-black/7 bg-[#faf9f7] py-3 pl-10 pr-3 text-xs outline-none focus:border-black/20"
                       />
                     </div>
                     <button
+                      type="button"
                       onClick={lookup}
-                      className="rounded-2xl bg-[#171717] px-4 text-xs font-black text-white"
+                      disabled={lookingUpCustomer}
+                      className="rounded-2xl bg-[#171717] px-4 text-xs font-black text-white disabled:opacity-50"
                     >
-                      Find
+                      {lookingUpCustomer ? "Finding…" : "Find"}
                     </button>
                   </div>
 
@@ -1803,18 +1954,66 @@ export default function Admin({ navigate }) {
                       <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-[#237545]">
                         <Icon name="user" size={15} />
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-black text-[#174d2b]">
-                          {customer.name}
+                          {customer.name || "Customer"}
                         </p>
                         <p className="mt-0.5 text-[10px] text-[#174d2b]/50">
                           {customer.phone}
                         </p>
                       </div>
+                      <span className="rounded-full bg-white px-2 py-1 text-[9px] font-black text-[#237545]">
+                        SELECTED
+                      </span>
+                    </div>
+                  )}
+
+                  {showCreateCustomer && !customer && (
+                    <div className="mt-3 rounded-2xl border border-dashed border-[#c62828]/25 bg-[#fff9f7] p-4">
+                      <p className="text-xs font-black">New customer</p>
+                      <p className="mt-1 text-[10px] leading-4 text-black/45">
+                        This phone number is not registered yet. Add the customer's name to continue.
+                      </p>
+                      <label className="mt-3 block text-[10px] font-bold uppercase tracking-wider text-black/45">
+                        Customer name
+                      </label>
+                      <input
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") createPOSCustomer();
+                        }}
+                        placeholder="Enter full name"
+                        autoComplete="name"
+                        className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-3 text-xs outline-none focus:border-[#c62828]/50"
+                      />
+                      <button
+                        type="button"
+                        onClick={createPOSCustomer}
+                        disabled={creatingCustomer || !customerName.trim()}
+                        className="mt-3 w-full rounded-xl bg-[#c62828] px-4 py-3 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {creatingCustomer ? "Creating customer…" : "Create customer"}
+                      </button>
                     </div>
                   )}
 
                   <div className="my-5 border-t border-dashed border-black/10" />
+
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-[10px] font-black uppercase tracking-[0.16em] text-black/35">
+                      {cart.length} {cart.length === 1 ? "item" : "items"}
+                    </p>
+                    {cart.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={posClearCart}
+                        className="rounded-full px-3 py-1.5 text-[10px] font-black text-red-600 transition hover:bg-red-50"
+                      >
+                        Clear bill
+                      </button>
+                    )}
+                  </div>
 
                   {cart.length === 0 ? (
                     <div className="rounded-2xl bg-[#f7f6f3] p-8 text-center">
@@ -1833,19 +2032,52 @@ export default function Admin({ navigate }) {
                       {cart.map((item) => (
                         <div
                           key={item.product}
-                          className="flex items-center justify-between rounded-2xl bg-[#faf9f7] p-3"
+                          className="rounded-2xl bg-[#faf9f7] p-3"
                         >
-                          <div className="min-w-0">
-                            <p className="truncate text-xs font-black">
-                              {item.name}
-                            </p>
-                            <p className="mt-1 text-[10px] text-black/35">
-                              ₹{item.price} × {item.quantity}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-xs font-black">
+                                {item.name}
+                              </p>
+                              <p className="mt-1 text-[10px] text-black/40">
+                                ₹{item.price} each
+                              </p>
+                            </div>
+                            <p className="shrink-0 text-xs font-black">
+                              ₹{item.price * item.quantity}
                             </p>
                           </div>
-                          <p className="text-xs font-black">
-                            ₹{item.price * item.quantity}
-                          </p>
+
+                          <div className="mt-3 flex items-center justify-between">
+                            <div className="flex items-center gap-2 rounded-xl border border-black/7 bg-white p-1">
+                              <button
+                                type="button"
+                                aria-label={`Decrease ${item.name} quantity`}
+                                onClick={() => posChangeQuantity(item.product, -1)}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/65 transition hover:bg-black/5"
+                              >
+                                <Icon name="minus" size={13} />
+                              </button>
+                              <span className="min-w-5 text-center text-xs font-black">
+                                {item.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Increase ${item.name} quantity`}
+                                onClick={() => posChangeQuantity(item.product, 1)}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg text-black/65 transition hover:bg-black/5"
+                              >
+                                <Icon name="plus" size={13} />
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => posRemoveItem(item.product)}
+                              className="rounded-lg px-2.5 py-2 text-[10px] font-black text-red-600 transition hover:bg-red-50"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1863,13 +2095,143 @@ export default function Admin({ navigate }) {
 
                     <button
                       onClick={posCreate}
-                      disabled={!customer || cart.length === 0}
+                      disabled={!customer || cart.length === 0 || posCreating}
                       className="mt-4 w-full rounded-2xl bg-[#c62828] py-3.5 text-xs font-black text-white shadow-[0_10px_25px_rgba(198,40,40,.15)] disabled:cursor-not-allowed disabled:opacity-35"
                     >
-                      Create COD bill
+                      {posCreating ? "Creating bill…" : "Create COD bill"}
                     </button>
                   </div>
                 </aside>
+              </div>
+            </div>
+          )}
+
+          {posReceipt && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto bg-black/55 p-4 sm:p-6">
+              <style>{`
+                @media print {
+                  @page { margin: 6mm; }
+                  body * { visibility: hidden !important; }
+                  #pos-receipt-print, #pos-receipt-print * { visibility: visible !important; }
+                  #pos-receipt-print {
+                    position: fixed !important;
+                    left: 0 !important;
+                    top: 0 !important;
+                    width: 72mm !important;
+                    max-width: 72mm !important;
+                    margin: 0 !important;
+                    padding: 4mm !important;
+                    border: 0 !important;
+                    border-radius: 0 !important;
+                    box-shadow: none !important;
+                    background: #fff !important;
+                    color: #000 !important;
+                  }
+                  .pos-receipt-no-print { display: none !important; }
+                }
+              `}</style>
+
+              <div className="my-auto w-full max-w-md">
+                <div className="pos-receipt-no-print mb-3 flex items-center justify-between gap-3 text-white">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.18em] text-white/65">
+                      POS complete
+                    </p>
+                    <h3 className="mt-1 text-xl font-black">Receipt preview</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPosReceipt(null)}
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 transition hover:bg-white/25"
+                    aria-label="Close receipt preview"
+                  >
+                    <Icon name="close" size={18} />
+                  </button>
+                </div>
+
+                <div id="pos-receipt-print" className="mx-auto rounded-2xl bg-white p-6 text-[#171717] shadow-2xl">
+                  <div className="text-center">
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#c62828]">
+                      Dilli Cuts
+                    </p>
+                    <h2 className="mt-1 text-2xl font-black tracking-tight">Sales Receipt</h2>
+                    <p className="mt-1 text-[10px] text-black/55">Fresh cuts. Quality you trust.</p>
+                  </div>
+
+                  <div className="my-4 border-t border-dashed border-black/25" />
+
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between gap-3">
+                      <span className="text-black/55">Receipt</span>
+                      <span className="font-bold">{posReceipt.orderId ? posReceipt.orderId.slice(-8).toUpperCase() : "—"}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-black/55">Date</span>
+                      <span className="text-right font-semibold">
+                        {new Date(posReceipt.createdAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-black/55">Customer</span>
+                      <span className="max-w-[65%] text-right font-semibold">{posReceipt.customer.name}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-black/55">Phone</span>
+                      <span className="font-semibold">{posReceipt.customer.phone}</span>
+                    </div>
+                  </div>
+
+                  <div className="my-4 border-t border-dashed border-black/25" />
+
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-[1fr_auto] gap-3 text-[10px] font-black uppercase tracking-wider text-black/50">
+                      <span>Item / Qty</span>
+                      <span>Amount</span>
+                    </div>
+                    {posReceipt.items.map((item, index) => (
+                      <div key={`${item.name}-${index}`} className="grid grid-cols-[1fr_auto] gap-3 text-xs">
+                        <div>
+                          <p className="font-bold">{item.name}</p>
+                          <p className="mt-0.5 text-[10px] text-black/55">{item.quantity} × ₹{item.price}</p>
+                        </div>
+                        <p className="font-bold">₹{item.price * item.quantity}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="my-4 border-t border-dashed border-black/25" />
+
+                  <div className="flex items-end justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-wider text-black/55">Total</p>
+                      <p className="mt-1 text-[10px] text-black/55">
+                        {posReceipt.paymentMethod === "COD" ? "Cash / counter payment" : "Online payment"}
+                      </p>
+                    </div>
+                    <p className="text-2xl font-black">₹{posReceipt.totalAmount}</p>
+                  </div>
+
+                  <div className="my-4 border-t border-dashed border-black/25" />
+                  <p className="text-center text-[10px] text-black/60">Thank you for shopping with Dilli Cuts!</p>
+                  <p className="mt-1 text-center text-[9px] text-black/40">Please retain this receipt for your records.</p>
+                </div>
+
+                <div className="pos-receipt-no-print mt-4 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="flex-1 rounded-2xl bg-white px-5 py-3.5 text-xs font-black text-[#171717] transition hover:bg-[#f3f0eb]"
+                  >
+                    Print receipt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPosReceipt(null)}
+                    className="flex-1 rounded-2xl bg-[#c62828] px-5 py-3.5 text-xs font-black text-white transition hover:bg-[#ad2222]"
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
           )}

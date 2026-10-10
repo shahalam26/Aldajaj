@@ -1,4 +1,5 @@
 import User from "../model/user.model.js";
+import { normalizePhone, isValidPhone } from "../utils/phone.util.js";
 
 const getCurrentUser = async (req, res) => {
   try {
@@ -49,7 +50,7 @@ const updateProfile = async (req, res) => {
 
     // Name validation
     if (name !== undefined) {
-      if (!name.trim()) {
+      if (typeof name !== "string" || !name.trim()) {
         return res.status(400).json({
           success: false,
           message: "Name cannot be empty",
@@ -61,6 +62,13 @@ const updateProfile = async (req, res) => {
 
     // Email validation
     if (email !== undefined) {
+      if (typeof email !== "string") {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid email address",
+        });
+      }
+
       const trimmedEmail = email.trim().toLowerCase();
 
       if (!trimmedEmail) {
@@ -121,7 +129,16 @@ const addAddress = async (req, res) => {
       isDefault,
     } = req.body;
 
-    if (!addressLine || !city || !state || !pincode) {
+    if (
+      typeof addressLine !== "string" ||
+      !addressLine.trim() ||
+      typeof city !== "string" ||
+      !city.trim() ||
+      typeof state !== "string" ||
+      !state.trim() ||
+      typeof pincode !== "string" ||
+      !pincode.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Address, city, state and pincode are required",
@@ -155,7 +172,8 @@ const addAddress = async (req, res) => {
       city: city.trim(),
       state: state.trim(),
       pincode: pincode.trim(),
-      landmark: landmark?.trim() || "",
+      landmark:
+        typeof landmark === "string" ? landmark.trim() : "",
       latitude: latitude ?? null,
       longitude: longitude ?? null,
       isDefault: shouldBeDefault,
@@ -227,23 +245,52 @@ const updateAddress = async (req, res) => {
     }
 
     if (addressLine !== undefined) {
+      if (typeof addressLine !== "string" || !addressLine.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Address cannot be empty",
+        });
+      }
+
       address.addressLine = addressLine.trim();
     }
 
     if (city !== undefined) {
+      if (typeof city !== "string" || !city.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "City cannot be empty",
+        });
+      }
+
       address.city = city.trim();
     }
 
     if (state !== undefined) {
+      if (typeof state !== "string" || !state.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "State cannot be empty",
+        });
+      }
+
       address.state = state.trim();
     }
 
     if (pincode !== undefined) {
+      if (typeof pincode !== "string" || !pincode.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Pincode cannot be empty",
+        });
+      }
+
       address.pincode = pincode.trim();
     }
 
     if (landmark !== undefined) {
-      address.landmark = landmark.trim();
+      address.landmark =
+        typeof landmark === "string" ? landmark.trim() : "";
     }
 
     if (latitude !== undefined) {
@@ -254,7 +301,7 @@ const updateAddress = async (req, res) => {
       address.longitude = longitude;
     }
 
-    if (isDefault !== undefined && isDefault === false) {
+    if (isDefault === false) {
       address.isDefault = false;
     }
 
@@ -316,19 +363,20 @@ const deleteAddress = async (req, res) => {
   }
 };
 
+// POS: Find an existing customer using their phone number.
 const findCustomerByPhone = async (req, res) => {
   try {
-    const { phone } = req.query;
+    const normalizedPhone = normalizePhone(req.query.phone);
 
-    if (!phone) {
+    if (!isValidPhone(normalizedPhone)) {
       return res.status(400).json({
         success: false,
-        message: "Phone number is required",
+        message: "Enter a valid 10-digit Indian mobile number",
       });
     }
 
     const customer = await User.findOne({
-      phone: phone.trim(),
+      phone: normalizedPhone,
       role: "user",
     }).select("-password");
 
@@ -348,36 +396,48 @@ const findCustomerByPhone = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Could not find customer",
     });
   }
 };
 
+// POS: Create a new customer when the phone number is not registered.
 const createPOSCustomer = async (req, res) => {
   try {
-    const { name, phone } = req.body;
+    const name =
+      typeof req.body.name === "string" ? req.body.name.trim() : "";
 
-    if (!name || !phone) {
+    const normalizedPhone = normalizePhone(req.body.phone);
+
+    if (!name) {
       return res.status(400).json({
         success: false,
-        message: "Name and phone are required",
+        message: "Customer name is required",
+      });
+    }
+
+    if (!isValidPhone(normalizedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: "Enter a valid 10-digit Indian mobile number",
       });
     }
 
     const existingCustomer = await User.findOne({
-      phone: phone.trim(),
-    });
+      phone: normalizedPhone,
+    }).select("_id name phone role");
 
     if (existingCustomer) {
       return res.status(409).json({
         success: false,
-        message: "Customer with this phone number already exists",
+        message:
+          "Customer with this phone number already exists. Find the existing customer instead.",
       });
     }
 
     const customer = await User.create({
-      name: name.trim(),
-      phone: phone.trim(),
+      name,
+      phone: normalizedPhone,
       role: "user",
       isPhoneVerified: false,
     });
@@ -386,18 +446,29 @@ const createPOSCustomer = async (req, res) => {
       success: true,
       message: "Customer created successfully",
       customer: {
+        _id: customer._id,
         id: customer._id,
         name: customer.name,
         phone: customer.phone,
         role: customer.role,
+        isPhoneVerified: customer.isPhoneVerified,
       },
     });
   } catch (error) {
+    // Handle duplicate phone numbers if two requests arrive together.
+    if (error?.code === 11000 && error?.keyPattern?.phone) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Customer with this phone number already exists. Find the existing customer instead.",
+      });
+    }
+
     console.error("createPOSCustomer error:", error);
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Could not create customer",
     });
   }
 };

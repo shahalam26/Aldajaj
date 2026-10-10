@@ -1,11 +1,14 @@
+
 import crypto from "crypto";
 import mongoose from "mongoose";
 
 import Cashfree from "../config/cashfree.js";
 import Order from "../model/order.model.js";
 import User from "../model/user.model.js";
+
 import { reduceStock } from "../services/inventory.service.js";
 import sendWhatsAppMessage from "../services/whatsapp.service.js";
+import sendOrderEmail from "../services/email.service.js";
 import { buildOrderPlacedMessage } from "../services/orderMessage.service.js";
 
 const amountsMatch = (a, b) => {
@@ -20,27 +23,42 @@ const amountsMatch = (a, b) => {
 };
 
 const notifyPaidOrder = async (orderId) => {
+  let order;
+  let user;
+
   try {
-    const order = await Order.findById(orderId).populate(
+    order = await Order.findById(orderId).populate(
       "items.product",
       "name price"
     );
 
     if (!order) return;
 
-    const user = await User.findById(order.user);
+    user = await User.findById(order.user);
 
-    if (!user?.phone) return;
-
-    const message = buildOrderPlacedMessage(order, user);
-    await sendWhatsAppMessage(user.phone, message);
+    if (!user) return;
   } catch (error) {
-    // Notification failure must not undo a confirmed payment.
     console.error(
-      "Paid-order WhatsApp notification failed:",
+      "Could not load paid order for notifications:",
       error.message
     );
+    return;
   }
+
+  // WhatsApp and email are independent best-effort notifications.
+  if (user.phone) {
+    try {
+      const message = buildOrderPlacedMessage(order, user);
+      await sendWhatsAppMessage(user.phone, message);
+    } catch (error) {
+      console.error(
+        "Paid-order WhatsApp notification failed:",
+        error.message
+      );
+    }
+  }
+
+  await sendOrderEmail(order, user, "payment");
 };
 
 /**
