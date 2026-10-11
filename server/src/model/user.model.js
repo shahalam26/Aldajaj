@@ -1,3 +1,4 @@
+
 import mongoose from "mongoose";
 
 const addressSchema = new mongoose.Schema(
@@ -7,47 +8,39 @@ const addressSchema = new mongoose.Schema(
       enum: ["HOME", "WORK", "OTHER"],
       default: "HOME",
     },
-
     addressLine: {
       type: String,
       required: true,
       trim: true,
     },
-
     city: {
       type: String,
       required: true,
       trim: true,
     },
-
     state: {
       type: String,
       required: true,
       trim: true,
     },
-
     pincode: {
       type: String,
       required: true,
       trim: true,
     },
-
     landmark: {
       type: String,
       trim: true,
       default: "",
     },
-
     latitude: {
       type: Number,
       default: null,
     },
-
     longitude: {
       type: Number,
       default: null,
     },
-
     isDefault: {
       type: Boolean,
       default: false,
@@ -64,44 +57,39 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
     username: {
-  type: String,
-  trim: true,
-  lowercase: true,
-  unique: true,
-  sparse: true,
-},
-
+      type: String,
+      trim: true,
+      lowercase: true,
+      unique: true,
+      sparse: true,
+    },
     email: {
-  type: String,
-  lowercase: true,
-  trim: true,
-  default: undefined,
-},
+      type: String,
+      lowercase: true,
+      trim: true,
+      default: undefined,
+    },
     phone: {
       type: String,
       required: true,
       unique: true,
       trim: true,
     },
-
     password: {
       type: String,
       required: function () {
         return this.role === "admin";
       },
     },
-
     role: {
       type: String,
       enum: ["user", "admin"],
       default: "user",
     },
-
     isPhoneVerified: {
       type: Boolean,
       default: false,
     },
-
     addresses: {
       type: [addressSchema],
       default: [],
@@ -109,6 +97,17 @@ const userSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+  }
+);
+
+// Email is optional, but must be unique when it is a string.
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      email: { $type: "string" },
+    },
   }
 );
 
