@@ -1,22 +1,17 @@
+
+import { sendWhatsAppOrderUpdate } from "./twilioWhatsapp.service.js";
+
 const sendWhatsAppMessage = async (phone, message) => {
+  if (!phone || !message) {
+    console.error("WhatsApp skipped: phone or message missing");
+    return { success: false };
+  }
+
   try {
-    console.log("WhatsApp message queued:", {
-      phone,
-      message,
-    });
-
-    // Actual WhatsApp API integration will be added here.
-
-    return {
-      success: true,
-    };
+    return await sendWhatsAppOrderUpdate({ phone, message });
   } catch (error) {
-    console.error("WhatsApp service error:", error.message);
-
-    return {
-      success: false,
-      message: error.message,
-    };
+    console.error("WhatsApp delivery failed:", error.message);
+    return { success: false, message: error.message };
   }
 };
 
