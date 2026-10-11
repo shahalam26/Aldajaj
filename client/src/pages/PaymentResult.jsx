@@ -1,6 +1,123 @@
+
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useCart } from "../context/CartContext";
+
+function formatCurrency(amount) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 2,
+  }).format(Number(amount || 0));
+}
+
+function StatusIcon({ status }) {
+  if (status === "verifying") {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#751F2B]/10">
+        <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-[#751F2B]/15 border-t-[#751F2B]" />
+      </div>
+    );
+  }
+
+  if (status === "success") {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          className="h-6 w-6"
+          aria-hidden="true"
+        >
+          <path
+            d="m5 12 4 4L19 6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </div>
+    );
+  }
+
+  if (status === "failed") {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-700">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          className="h-6 w-6"
+          aria-hidden="true"
+        >
+          <path d="M8 8l8 8M16 8l-8 8" strokeLinecap="round" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50 text-amber-700">
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        className="h-6 w-6"
+        aria-hidden="true"
+      >
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v5m0 3h.01" strokeLinecap="round" />
+      </svg>
+    </div>
+  );
+}
+
+function getStatusContent(status) {
+  const content = {
+    verifying: {
+      eyebrow: "Secure payment verification",
+      title: "Confirming your payment",
+      description:
+        "We're checking your transaction securely. Please wait and avoid refreshing this page.",
+    },
+    success: {
+      eyebrow: "Payment confirmed",
+      title: "Thank you for your order!",
+      description:
+        "Your payment was received successfully and your order is confirmed.",
+    },
+    failed: {
+      eyebrow: "Payment update",
+      title: "Payment unsuccessful",
+      description:
+        "This payment attempt failed. Check your order status before attempting another payment.",
+    },
+    pending: {
+      eyebrow: "Awaiting confirmation",
+      title: "Your payment is taking longer",
+      description:
+        "The transaction hasn't been confirmed yet. Check My Orders before trying to pay again.",
+    },
+    notfound: {
+      eyebrow: "Order lookup",
+      title: "Let's find your order",
+      description:
+        "We couldn't identify this transaction. Your order may still exist, so check My Orders before attempting another payment.",
+    },
+    error: {
+      eyebrow: "Transaction update",
+      title: "We couldn't refresh your payment",
+      description:
+        "Please check My Orders before retrying. Your transaction may still need confirmation.",
+    },
+  };
+
+  return content[status] || content.error;
+}
 
 export default function PaymentResult({ navigate }) {
   const { clear } = useCart();
@@ -43,7 +160,7 @@ export default function PaymentResult({ navigate }) {
           ? response.orders
           : [];
 
-        // Cashfree's order ID can be used to find our local order.
+        // Match the local order or Cashfree order ID.
         let matchedOrder = reference
           ? orders.find(
               (item) =>
@@ -83,7 +200,7 @@ export default function PaymentResult({ navigate }) {
 
         const localOrderId = matchedOrder._id;
 
-        // Verify against Cashfree through our authenticated backend.
+        // Verify against Cashfree through the existing backend.
         for (let attempt = 0; attempt < 10; attempt++) {
           if (cancelled) return;
 
@@ -149,171 +266,165 @@ export default function PaymentResult({ navigate }) {
 
   const isSuccess = status === "success";
   const isVerifying = status === "verifying";
-
-  const formatCurrency = (amount) =>
-    new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      maximumFractionDigits: 2,
-    }).format(Number(amount || 0));
+  const content = getStatusContent(status);
 
   const orderShortId = order?._id
     ? order._id.slice(-8).toUpperCase()
     : null;
 
   return (
-    <main className="relative min-h-[85vh] overflow-hidden bg-[#11110f] px-4 py-12 text-white sm:px-6 sm:py-16">
-      {/* Ambient background */}
-      <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-red-600/10 blur-[100px]" />
-      <div className="pointer-events-none absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-amber-500/10 blur-[110px]" />
-
-      <div className="relative mx-auto max-w-2xl">
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-[10px] font-bold uppercase tracking-[0.24em] text-white/60">
-            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-            Dilli Cuts · Secure Checkout
+    <main className="min-h-[65vh] bg-[#F7F4EF] px-4 py-7 sm:py-10">
+      <div className="mx-auto max-w-xl">
+        <div className="mb-5 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-[#E5DED5] bg-white px-3 py-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[#751F2B]" />
+            <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-[#746B65]">
+              Dilli Cuts · Checkout
+            </span>
           </div>
         </div>
 
-        <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[#1b1b18] shadow-2xl shadow-black/30">
-          <div className="px-6 pb-9 pt-10 text-center sm:px-12 sm:pb-12 sm:pt-12">
-            {/* Transaction status icon */}
-            <div className="mx-auto mb-7 flex h-24 w-24 items-center justify-center rounded-full border border-white/10 bg-white/[0.04]">
-              {isVerifying ? (
-                <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/15 border-t-amber-400" />
-              ) : isSuccess ? (
-                <div className="flex h-16 w-16 animate-[pop_0.35s_ease-out] items-center justify-center rounded-full bg-emerald-400 text-3xl font-black text-[#10271b] shadow-lg shadow-emerald-500/20">
-                  ✓
-                </div>
-              ) : (
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-400/10 text-3xl font-bold text-amber-300">
-                  !
-                </div>
-              )}
+        <section className="overflow-hidden rounded-2xl border border-[#E5DED5] bg-white shadow-[0_8px_28px_rgba(41,35,33,0.05)]">
+          <div className="px-5 pb-6 pt-7 text-center sm:px-8 sm:pb-7 sm:pt-8">
+            <div className="mx-auto flex justify-center">
+              <StatusIcon status={status} />
             </div>
 
-            <p className="mb-3 text-xs font-bold uppercase tracking-[0.25em] text-amber-300">
-              {isVerifying
-                ? "Verifying transaction"
-                : isSuccess
-                ? "Transaction complete"
-                : status === "pending"
-                ? "Confirmation pending"
-                : "Transaction update"}
+            <p
+              className={`mt-4 text-[10px] font-bold uppercase tracking-[0.16em] ${
+                isSuccess ? "text-emerald-700" : "text-[#751F2B]"
+              }`}
+            >
+              {content.eyebrow}
             </p>
 
-            <h1 className="text-3xl font-black tracking-tight sm:text-4xl">
-              {isVerifying
-                ? "Almost there..."
-                : isSuccess
-                ? "Payment successful!"
-                : status === "failed"
-                ? "Payment unsuccessful"
-                : status === "notfound"
-                ? "Let's find your order"
-                : "We're checking your payment"}
+            <h1 className="mt-2 text-xl font-bold tracking-tight text-[#292321] sm:text-2xl">
+              {content.title}
             </h1>
 
-            <p className="mx-auto mt-4 max-w-md text-sm leading-7 text-white/60">
-              {message}
+            <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-[#746B65]">
+              {message || content.description}
             </p>
 
+            {isVerifying && (
+              <p className="mt-3 text-[11px] text-[#8A817A]">
+                This may take a few moments.
+              </p>
+            )}
+
             {isSuccess && (
-              <div className="mt-7 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-sm font-semibold text-emerald-300">
-                <span>✓</span>
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                <span aria-hidden="true">✓</span>
                 Secure payment verified
               </div>
             )}
           </div>
 
-          {/* Receipt details */}
           {order && (
-            <div className="mx-5 mb-5 rounded-2xl border border-white/10 bg-black/20 p-5 sm:mx-8 sm:p-6">
-              <div className="mb-5 flex items-center justify-between gap-4">
+            <div className="mx-3 mb-3 rounded-xl border border-[#E5DED5] bg-[#FAF8F5] p-3.5 sm:mx-5 sm:mb-5 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-[#8A817A]">
                     Order reference
                   </p>
-                  <p className="mt-1 font-mono text-lg font-bold tracking-wider">
+
+                  <p className="mt-1 font-mono text-base font-bold tracking-wide text-[#292321]">
                     #{orderShortId}
                   </p>
                 </div>
 
                 <span
-                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-wider ${
+                  className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${
                     isSuccess
-                      ? "bg-emerald-400/10 text-emerald-300"
-                      : "bg-amber-400/10 text-amber-300"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : status === "failed"
+                        ? "bg-red-50 text-red-700"
+                        : "bg-amber-50 text-amber-800"
                   }`}
                 >
-                  {isSuccess ? "Paid" : order.paymentStatus}
+                  {isSuccess
+                    ? "PAID"
+                    : status === "failed"
+                      ? "FAILED"
+                      : order.paymentStatus || "PENDING"}
                 </span>
               </div>
 
-              <div className="flex items-end justify-between border-t border-dashed border-white/10 pt-5">
+              <div className="mt-3 grid grid-cols-2 gap-4 border-t border-dashed border-[#E5DED5] pt-3">
                 <div>
-                  <p className="text-xs text-white/45">
-                    Amount
+                  <p className="text-[11px] text-[#8A817A]">
+                    Product types
                   </p>
-                  <p className="mt-1 text-sm font-medium text-white/80">
-                    {order.items?.length || 0} product type(s)
+                  <p className="mt-1 text-sm font-semibold text-[#292321]">
+                    {order.items?.length || 0}
                   </p>
                 </div>
 
-                <p className="text-2xl font-black tracking-tight sm:text-3xl">
-                  {formatCurrency(order.totalAmount)}
-                </p>
+                <div className="text-right">
+                  <p className="text-[11px] text-[#8A817A]">Order total</p>
+                  <p className="mt-1 text-xl font-bold tracking-tight text-[#292321]">
+                    {formatCurrency(order.totalAmount)}
+                  </p>
+                </div>
               </div>
 
-              <div className="mt-5 flex items-center gap-3 rounded-xl bg-white/[0.04] p-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-400/10 text-lg">
-                  🛵
+              <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-[#E5DED5] bg-white p-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#F7F4EF] text-[#751F2B]">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    className="h-4 w-4"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M3 7h11v11H3zM14 11h4l3 3v4h-7z"
+                      strokeLinejoin="round"
+                    />
+                    <circle cx="7.5" cy="18" r="1.5" />
+                    <circle cx="17.5" cy="18" r="1.5" />
+                  </svg>
                 </div>
+
                 <div>
-                  <p className="text-sm font-bold">
+                  <p className="text-xs font-semibold text-[#292321]">
                     What's next?
                   </p>
-                  <p className="mt-1 text-xs leading-5 text-white/45">
-                    Track your order status from your orders page.
+                  <p className="mt-1 text-[11px] leading-4 text-[#746B65]">
+                    Track your order status from the My Orders page.
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="grid gap-3 px-5 pb-7 sm:grid-cols-2 sm:px-8 sm:pb-8">
+          <div className="grid gap-2.5 px-3 pb-4 sm:grid-cols-2 sm:px-5 sm:pb-5">
             <button
+              type="button"
               onClick={() => navigate("/orders")}
-              className="flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-[#f4c66a] px-5 py-4 text-sm font-black text-[#21190b] transition hover:bg-[#ffda8d] active:scale-[0.98]"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#751F2B] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#5E1822] focus:outline-none focus:ring-2 focus:ring-[#751F2B]/30 focus:ring-offset-2"
             >
               View my orders
               <span aria-hidden="true">→</span>
             </button>
 
             <button
+              type="button"
               onClick={() => navigate("/")}
-              className="min-h-14 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 text-sm font-bold text-white transition hover:bg-white/[0.08] active:scale-[0.98]"
+              className="min-h-10 rounded-xl border border-[#E5DED5] bg-white px-4 py-2.5 text-xs font-semibold text-[#514740] transition hover:border-[#B8AAA0] hover:bg-[#FAF8F5] focus:outline-none focus:ring-2 focus:ring-[#751F2B]/20 focus:ring-offset-2"
             >
               Continue shopping
             </button>
           </div>
         </section>
 
-        <p className="mt-6 text-center text-xs leading-6 text-white/35">
-          Please keep your order reference for support.
+        <p className="mt-4 text-center text-[10px] leading-5 text-[#8A817A]">
+          Keep your order reference for support.
           <br />
-          Dilli Cuts · Freshness you can trust.
+          Dilli Cuts · Fresh cuts, thoughtfully delivered.
         </p>
       </div>
-
-      <style>{`
-        @keyframes pop {
-          0% { transform: scale(.65); opacity: .3; }
-          75% { transform: scale(1.08); }
-          100% { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
     </main>
   );
 }

@@ -1,8 +1,33 @@
+
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 
-export default function Login({ navigate }) {
+function getSafeDestination(returnTo, hasCartItems) {
+  // An explicit protected-route destination takes priority.
+  if (
+    typeof returnTo === "string" &&
+    returnTo.startsWith("/") &&
+    !returnTo.startsWith("//")
+  ) {
+    const path = returnTo.split(/[?#]/)[0];
+
+    if (
+      path !== "/admin" &&
+      !path.startsWith("/admin/") &&
+      path !== "/admin-login"
+    ) {
+      return returnTo;
+    }
+  }
+
+  // Direct login: resume shopping when the cart has items.
+  return hasCartItems ? "/checkout" : "/profile";
+}
+
+export default function Login({ navigate, returnTo = null }) {
   const { requestOTP, verifyOTP } = useAuth();
+  const { items } = useCart();
 
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -18,11 +43,9 @@ export default function Login({ navigate }) {
       await requestOTP(phone);
 
       setSent(true);
-      setMessage(
-        "OTP sent. Check your development server console."
-      );
-    } catch (e) {
-      setMessage(e.message);
+      setMessage("OTP sent. Enter the code to continue.");
+    } catch (error) {
+      setMessage(error.message || "Unable to send OTP. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -35,99 +58,116 @@ export default function Login({ navigate }) {
 
       await verifyOTP(phone, otp);
 
-      // Customer login always goes to profile.
-      // Admin authentication is handled separately
-      // through /admin-login.
-      navigate("/profile");
-    } catch (e) {
-      setMessage(e.message);
+      const destination = getSafeDestination(
+        returnTo,
+        items.length > 0
+      );
+
+      navigate(destination);
+    } catch (error) {
+      setMessage(error.message || "OTP verification failed. Please try again.");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="mx-auto flex min-h-[75vh] max-w-md items-center px-5 py-16">
-      <div className="w-full rounded-3xl bg-white p-7 shadow-xl">
-        <p className="text-xs font-bold tracking-[.18em] text-[#c62828]">
+    <section className="flex min-h-[75vh] items-center justify-center bg-[#F7F4EF] px-4 py-10 sm:px-6">
+      <div className="w-full max-w-md rounded-3xl border border-[#E5DED5] bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-xs font-bold tracking-[0.2em] text-[#751F2B]">
           DILLI CUTS
         </p>
 
-        <h1 className="mt-3 text-3xl font-black">
-          Login with phone
+        <h1 className="mt-3 text-2xl font-bold tracking-tight text-[#292321] sm:text-3xl">
+          Welcome back
         </h1>
 
-        <p className="mt-2 text-sm text-black/50">
-          No password. We'll verify your number with OTP.
+        <p className="mt-2 text-sm leading-6 text-[#746B65]">
+          Sign in with your phone number to continue shopping and manage your
+          delivery addresses.
         </p>
 
-        <label className="mt-7 block text-sm font-bold">
+        <label className="mt-7 block text-sm font-semibold text-[#292321]">
           Phone number
         </label>
 
         <input
           value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          disabled={sent}
+          onChange={(event) =>
+            setPhone(event.target.value.replace(/\D/g, "").slice(0, 10))
+          }
+          disabled={sent || busy}
           inputMode="numeric"
           autoComplete="tel"
-          className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-3 outline-none focus:border-[#c62828]"
-          placeholder="9876543210"
+          maxLength={10}
+          placeholder="10-digit mobile number"
+          className="mt-2 w-full rounded-xl border border-[#E5DED5] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10 disabled:bg-[#F7F4EF]"
         />
 
         {!sent ? (
           <button
-            disabled={busy || phone.length < 10}
+            type="button"
+            disabled={busy || phone.length !== 10}
             onClick={send}
-            className="mt-4 w-full rounded-2xl bg-[#c62828] py-3.5 font-bold text-white disabled:opacity-40"
+            className="mt-4 w-full rounded-xl bg-[#751F2B] py-3.5 text-sm font-semibold text-white transition hover:bg-[#5E1822] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {busy ? "Sending..." : "Send OTP"}
+            {busy ? "Sending OTP..." : "Send OTP"}
           </button>
         ) : (
           <>
-            <label className="mt-5 block text-sm font-bold">
-              OTP
+            <label className="mt-5 block text-sm font-semibold text-[#292321]">
+              Enter OTP
             </label>
 
             <input
               value={otp}
-              onChange={(e) =>
-                setOtp(e.target.value.replace(/\D/g, ""))
+              onChange={(event) =>
+                setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))
               }
               maxLength={6}
               inputMode="numeric"
               autoComplete="one-time-code"
-              className="mt-2 w-full rounded-2xl border border-black/10 px-4 py-3 text-center text-xl tracking-[.5em] outline-none"
               placeholder="••••••"
+              className="mt-2 w-full rounded-xl border border-[#E5DED5] px-4 py-3 text-center text-xl tracking-[0.5em] outline-none transition focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
             />
 
             <button
+              type="button"
               disabled={busy || otp.length !== 6}
               onClick={verify}
-              className="mt-4 w-full rounded-2xl bg-[#171717] py-3.5 font-bold text-white disabled:opacity-40"
+              className="mt-4 w-full rounded-xl bg-[#292321] py-3.5 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy ? "Verifying..." : "Verify & Continue"}
             </button>
 
             <button
+              type="button"
+              disabled={busy}
               onClick={() => {
                 setSent(false);
                 setOtp("");
                 setMessage("");
               }}
-              className="mt-3 w-full py-2 text-sm text-black/50"
+              className="mt-3 w-full py-2 text-sm font-medium text-[#746B65] transition hover:text-[#292321] disabled:opacity-50"
             >
-              Change number
+              Change phone number
             </button>
           </>
         )}
 
         {message && (
-          <p className="mt-4 rounded-xl bg-black/5 p-3 text-sm">
+          <p
+            role="status"
+            className="mt-4 rounded-xl bg-[#F7F4EF] p-3 text-sm leading-5 text-[#514740]"
+          >
             {message}
           </p>
         )}
+
+        <p className="mt-6 text-center text-xs leading-5 text-[#8A817A]">
+          Secure sign-in for your orders and saved addresses.
+        </p>
       </div>
-    </div>
+    </section>
   );
 }

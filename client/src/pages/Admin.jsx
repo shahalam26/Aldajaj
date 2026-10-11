@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../services/api";
 import { useAuth } from "../context/AuthContext";
-import { connectRealtime } from "../services/realtime";
 
 const emptyProduct = {
   name: "",
@@ -137,30 +136,30 @@ function Icon({ name, size = 18 }) {
 
 function StatCard({ label, value, note, icon, tone = "dark" }) {
   const tones = {
-    dark: "bg-[#171717] text-white",
-    cream: "bg-[#fffaf4] text-[#171717]",
-    red: "bg-[#c92d2d] text-white",
+    dark: "bg-[#751F2B] text-white",
+    cream: "bg-[#fffaf4] text-[#292321]",
+    red: "bg-[#FBEDEC] text-[#8F2630] ring-1 ring-inset ring-[#F0D5D2]",
     green: "bg-[#eaf7ef] text-[#174d2b]",
   };
 
   return (
-    <div className={`rounded-[24px] p-5 ${tones[tone]}`}>
+    <div className={`rounded-[22px] border border-black/[0.035] p-5 shadow-[0_5px_20px_rgba(41,35,33,0.025)] ${tones[tone]}`}>
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className={`text-xs font-semibold ${tone === "dark" || tone === "red" ? "text-white/55" : "text-black/45"}`}>
+          <p className={`text-xs font-semibold ${tone === "dark" ? "text-white/75" : tone === "red" ? "text-[#8F2630]/75" : "text-[#716660]"}`}>
             {label}
           </p>
           <p className="mt-3 text-[30px] font-black tracking-[-0.05em]">
             {value}
           </p>
           {note && (
-            <p className={`mt-1 text-xs ${tone === "dark" || tone === "red" ? "text-white/45" : "text-black/45"}`}>
+            <p className={`mt-1 text-xs ${tone === "dark" ? "text-white/70" : tone === "red" ? "text-[#8F2630]/70" : "text-[#8C817A]"}`}>
               {note}
             </p>
           )}
         </div>
         <div className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
-          tone === "dark" || tone === "red" ? "bg-white/10" : "bg-black/5"
+          tone === "dark" ? "bg-white/15 text-white" : tone === "red" ? "bg-white text-[#8F2630]" : "bg-black/5"
         }`}>
           <Icon name={icon} size={18} />
         </div>
@@ -174,11 +173,11 @@ function SectionHeader({ eyebrow, title, description, action }) {
     <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         {eyebrow && (
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c62828]">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#751F2B]">
             {eyebrow}
           </p>
         )}
-        <h2 className="mt-1 text-[22px] font-black tracking-[-0.04em] text-[#171717]">
+        <h2 className="mt-1 text-[22px] font-black tracking-[-0.04em] text-[#292321]">
           {title}
         </h2>
         {description && (
@@ -198,7 +197,6 @@ export default function Admin({ navigate }) {
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [message, setMessage] = useState("");
-  const [liveNotice, setLiveNotice] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
 
@@ -223,9 +221,9 @@ export default function Admin({ navigate }) {
   const [posCreating, setPosCreating] = useState(false);
   const [posReceipt, setPosReceipt] = useState(null);
 
-  const load = async (silent = false) => {
+  const load = async () => {
     try {
-      if (!silent) setLoading(true);
+      setLoading(true);
       const [d, p, o] = await Promise.all([
         api("/dashboard/today"),
         api("/products/inventory"),
@@ -244,7 +242,7 @@ export default function Admin({ navigate }) {
     } catch (error) {
       setMessage(error.message || "Failed to load admin data.");
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -255,54 +253,6 @@ export default function Admin({ navigate }) {
     }
     load();
   }, [user]);
-
-  // Keep the admin dashboard synchronized without a manual page refresh.
-  useEffect(() => {
-    if (user?.role !== "admin") return undefined;
-
-    const socket = connectRealtime();
-
-    if (!socket) return undefined;
-
-    const handleNewOrder = (event) => {
-      const orderId = String(event?.orderId || "")
-        .slice(-8)
-        .toUpperCase();
-      const amount = Number(event?.totalAmount || 0).toLocaleString("en-IN");
-
-      setLiveNotice({
-        id: `${event?.orderId || "order"}-${Date.now()}`,
-        title: "New order received",
-        detail: `Order #${orderId} · ₹${amount}`,
-      });
-
-      // Refresh data quietly; don't block the admin UI.
-      void load(true);
-    };
-
-    const handleOrderUpdated = () => {
-      void load(true);
-    };
-
-    socket.on("order:new", handleNewOrder);
-    socket.on("order:updated", handleOrderUpdated);
-
-    return () => {
-      socket.off("order:new", handleNewOrder);
-      socket.off("order:updated", handleOrderUpdated);
-      socket.disconnect();
-    };
-  }, [user?.role]);
-
-  useEffect(() => {
-    if (!liveNotice) return undefined;
-
-    const timeoutId = window.setTimeout(() => {
-      setLiveNotice(null);
-    }, 8000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [liveNotice?.id]);
 
   const resetProductForm = () => {
     imagePreviews.forEach((item) => {
@@ -786,20 +736,14 @@ export default function Admin({ navigate }) {
     }
   };
 
- const totalRevenue = useMemo(
-  () =>
-    orders
-      .filter(
-        (order) =>
-          order.status !== "CANCELLED" &&
-          order.paymentStatus === "PAID"
-      )
-      .reduce(
+  const totalRevenue = useMemo(
+    () =>
+      orders.reduce(
         (sum, order) => sum + Number(order.totalAmount || 0),
         0
       ),
-  [orders]
-);
+    [orders]
+  );
 
   const lowStockProducts = useMemo(
     () => products.filter((product) => Number(product.stock) <= 0),
@@ -828,10 +772,10 @@ export default function Admin({ navigate }) {
   const currentNav = navItems.find((item) => item.id === tab);
 
   return (
-    <div className="min-h-screen bg-[#f6f5f2] text-[#171717]">
+    <div className="min-h-screen bg-[#F7F4EF] text-[#292321]">
 
       {/* MOBILE HEADER */}
-      <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-black/5 bg-[#f6f5f2]/95 px-4 backdrop-blur lg:hidden">
+      <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-[#E5DED5] bg-[#F7F4EF]/95 px-4 backdrop-blur lg:hidden">
         <button
           onClick={() => setMobileNav(true)}
           className="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-sm"
@@ -840,7 +784,7 @@ export default function Admin({ navigate }) {
         </button>
 
         <div className="text-center">
-          <p className="text-[9px] font-black tracking-[0.2em] text-[#c62828]">
+          <p className="text-[9px] font-black tracking-[0.2em] text-[#751F2B]">
             DILLI CUTS
           </p>
           <p className="text-sm font-black">Admin</p>
@@ -864,19 +808,19 @@ export default function Admin({ navigate }) {
             onClick={() => setMobileNav(false)}
             className="absolute inset-0 bg-black/45"
           />
-          <aside className="relative h-full w-[280px] bg-[#151515] p-5 text-white shadow-2xl">
+          <aside className="relative h-full w-[280px] border-r border-[#E5DED5] bg-white p-5 text-[#292321] shadow-2xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xl font-black tracking-[-0.06em]">
-                  DILLI<span className="text-[#ef5350]"> CUTS</span>
+                  DILLI<span className="text-[#751F2B]"> CUTS</span>
                 </p>
-                <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-white/35">
+                <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-[#8C817A]">
                   Store control
                 </p>
               </div>
               <button
                 onClick={() => setMobileNav(false)}
-                className="rounded-xl bg-white/10 p-2"
+                className="rounded-xl bg-[#F7F4EF] p-2"
               >
                 <Icon name="close" size={17} />
               </button>
@@ -892,8 +836,8 @@ export default function Admin({ navigate }) {
                   }}
                   className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition ${
                     tab === item.id
-                      ? "bg-white text-[#171717]"
-                      : "text-white/55 hover:bg-white/5 hover:text-white"
+                      ? "bg-[#751F2B] text-white"
+                      : "text-[#716660] hover:bg-[#F7F4EF] hover:text-[#292321]"
                   }`}
                 >
                   <Icon name={item.icon} size={18} />
@@ -905,21 +849,21 @@ export default function Admin({ navigate }) {
         </div>
       )}
 
-      <div className="mx-auto flex min-h-screen max-w-[1600px]">
+      <div className="flex h-screen min-h-screen overflow-hidden bg-[#F7F4EF]">
 
         {/* DESKTOP SIDEBAR */}
-        <aside className="sticky top-0 hidden h-screen w-[245px] shrink-0 flex-col bg-[#151515] p-5 text-white lg:flex">
+        <aside className="fixed left-0 top-0 z-30 hidden h-screen w-[245px] shrink-0 flex-col border-r border-[#E5DED5] bg-white p-5 text-[#292321] lg:flex">
           <div className="px-3 pt-3">
             <p className="text-[25px] font-black tracking-[-0.07em]">
-              DILLI<span className="text-[#ef5350]"> CUTS</span>
+              DILLI<span className="text-[#751F2B]"> CUTS</span>
             </p>
-            <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.2em] text-white/30">
+            <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.2em] text-[#8C817A]">
               Store control center
             </p>
           </div>
 
           <div className="mt-10">
-            <p className="px-3 text-[9px] font-black uppercase tracking-[0.2em] text-white/25">
+            <p className="px-3 text-[9px] font-black uppercase tracking-[0.2em] text-[#9B918A]">
               Workspace
             </p>
 
@@ -930,15 +874,15 @@ export default function Admin({ navigate }) {
                   onClick={() => setTab(item.id)}
                   className={`group flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm font-semibold transition ${
                     tab === item.id
-                      ? "bg-white text-[#171717]"
-                      : "text-white/50 hover:bg-white/5 hover:text-white"
+                      ? "bg-[#751F2B] text-white"
+                      : "text-[#716660] hover:bg-[#F7F4EF] hover:text-[#292321]"
                   }`}
                 >
                   <span
                     className={`flex h-9 w-9 items-center justify-center rounded-xl ${
                       tab === item.id
-                        ? "bg-[#171717] text-white"
-                        : "bg-white/5"
+                        ? "bg-[#751F2B] text-white"
+                        : "bg-[#F7F4EF] text-[#716660] group-hover:bg-white group-hover:text-[#751F2B]"
                     }`}
                   >
                     <Icon name={item.icon} size={17} />
@@ -950,13 +894,13 @@ export default function Admin({ navigate }) {
           </div>
 
           <div className="mt-auto">
-            <div className="rounded-[22px] bg-white/[0.055] p-4">
-              <p className="text-xs font-bold text-white/80">
+            <div className="rounded-[22px] bg-[#F7F4EF] p-4">
+              <p className="text-xs font-bold text-[#292321]">
                 Store status
               </p>
               <div className="mt-3 flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                <span className="text-xs text-white/45">
+                <span className="text-xs text-[#716660]">
                   Online & accepting orders
                 </span>
               </div>
@@ -967,9 +911,9 @@ export default function Admin({ navigate }) {
                 logout();
                 navigate("/");
               }}
-              className="mt-3 flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold text-white/45 hover:bg-white/5 hover:text-white"
+              className="mt-3 flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-sm font-semibold text-[#716660] transition hover:bg-[#F7F4EF] hover:text-[#292321]"
             >
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F7F4EF]">
                 <Icon name="logout" size={17} />
               </span>
               Sign out
@@ -978,52 +922,12 @@ export default function Admin({ navigate }) {
         </aside>
 
         {/* MAIN */}
-        <main className="min-w-0 flex-1 px-4 pb-10 sm:px-6 lg:px-9">
-
-          {liveNotice && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="fixed right-4 top-4 z-[100] flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl border border-emerald-200 bg-white p-4 shadow-xl"
-            >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-lg">
-                🔔
-              </span>
-
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-black text-black">
-                  {liveNotice.title}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-black/60">
-                  {liveNotice.detail}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTab("orders");
-                    setLiveNotice(null);
-                  }}
-                  className="mt-3 text-xs font-black text-[#c62828]"
-                >
-                  View orders →
-                </button>
-              </div>
-
-              <button
-                type="button"
-                aria-label="Dismiss notification"
-                onClick={() => setLiveNotice(null)}
-                className="rounded-lg px-1 text-lg leading-none text-black/40 hover:text-black"
-              >
-                ×
-              </button>
-            </div>
-          )}
+        <main className="h-screen min-w-0 flex-1 overflow-y-auto px-4 pb-10 sm:px-6 lg:ml-[245px] lg:px-8 xl:px-10">
 
           {/* TOP BAR */}
-          <header className="hidden h-[88px] items-center justify-between lg:flex">
+          <header className="sticky top-0 z-20 hidden h-[88px] items-center justify-between border-b border-[#E5DED5]/80 bg-[#F7F4EF]/95 backdrop-blur lg:flex">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#c62828]">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#751F2B]">
                 {currentNav?.label || "Admin"}
               </p>
               <h1 className="mt-1 text-[24px] font-black tracking-[-0.05em]">
@@ -1037,18 +941,18 @@ export default function Admin({ navigate }) {
               <button
                 onClick={load}
                 disabled={loading}
-                className="flex items-center gap-2 rounded-xl border border-black/8 bg-white px-3.5 py-2.5 text-xs font-bold shadow-sm disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl border border-[#E5DED5] bg-white px-3.5 py-2.5 text-xs font-bold shadow-sm disabled:opacity-50"
               >
                 <Icon name="refresh" size={15} />
                 {loading ? "Refreshing" : "Refresh"}
               </button>
 
-              <div className="flex items-center gap-3 rounded-2xl border border-black/5 bg-white px-3 py-2 shadow-sm">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#171717] text-white">
+              <div className="flex items-center gap-3 rounded-2xl border border-[#E5DED5] bg-white px-3 py-2 shadow-sm">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#751F2B] text-white">
                   <Icon name="user" size={16} />
                 </div>
                 <div className="pr-2">
-                  <p className="text-xs font-black">
+                  <p className="text-xs font-bold text-[#292321]">
                     {user?.username || "Administrator"}
                   </p>
                   <p className="text-[10px] text-black/35">
@@ -1061,7 +965,7 @@ export default function Admin({ navigate }) {
 
           {/* MESSAGE */}
           {message && (
-            <div className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-black/5 bg-white px-4 py-3 text-sm shadow-sm">
+            <div className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-[#E5DED5] bg-white px-4 py-3 text-sm shadow-sm">
               <div className="flex items-center gap-2">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#eaf7ef] text-[#1c7540]">
                   <Icon name="check" size={14} />
@@ -1083,33 +987,33 @@ export default function Admin({ navigate }) {
           {tab === "dashboard" && dash && (
             <div className="space-y-6">
 
-              <section className="rounded-[30px] bg-[#171717] p-6 text-white sm:p-8">
+              <section className="relative overflow-hidden rounded-[26px] border border-[#E5DED5] bg-white p-5 shadow-[0_10px_35px_rgba(41,35,33,0.045)] sm:p-7">
                 <div className="flex flex-col justify-between gap-7 lg:flex-row lg:items-end">
                   <div className="max-w-xl">
-                    <span className="inline-flex rounded-full bg-white/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-white/55">
+                    <span className="inline-flex rounded-full bg-[#F7F4EF] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-[#751F2B]">
                       Today at Dilli Cuts
                     </span>
-                    <h2 className="mt-4 text-[32px] font-black leading-[1.02] tracking-[-0.06em] sm:text-[42px]">
+                    <h2 className="mt-3 text-[28px] font-black leading-[1.08] tracking-[-0.055em] text-[#292321] sm:text-[34px]">
                       Keep the cuts fresh,
                       <br />
                       keep the store moving.
                     </h2>
-                    <p className="mt-4 max-w-md text-sm leading-6 text-white/45">
+                    <p className="mt-3 max-w-md text-sm leading-6 text-[#716660]">
                       A quick view of orders, sales, customers and stock
                       health across your store.
                     </p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 sm:flex">
-                    <div className="rounded-2xl bg-white/10 px-5 py-4">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-white/35">
+                  <div className="grid grid-cols-2 gap-3 sm:flex">
+                    <div className="min-w-[108px] rounded-2xl border border-[#E5DED5] bg-[#F7F4EF] px-4 py-3.5">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-[#8C817A]">
                         Today
                       </p>
                       <p className="mt-1 text-xl font-black">
                         ₹{dash.todaySales || 0}
                       </p>
                     </div>
-                    <div className="rounded-2xl bg-[#c62828] px-5 py-4">
+                    <div className="min-w-[108px] rounded-2xl bg-[#751F2B] px-4 py-3.5 text-white">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-white/55">
                         Orders
                       </p>
@@ -1184,7 +1088,7 @@ export default function Admin({ navigate }) {
                     <div className="overflow-x-auto">
                       <table className="w-full min-w-[650px] text-left">
                         <thead>
-                          <tr className="border-b border-black/5 text-[10px] uppercase tracking-wider text-black/35">
+                          <tr className="border-b border-[#E5DED5] text-[10px] uppercase tracking-wider text-black/35">
                             <th className="px-3 py-3 font-black">Order</th>
                             <th className="px-3 py-3 font-black">Customer</th>
                             <th className="px-3 py-3 font-black">Status</th>
@@ -1195,7 +1099,7 @@ export default function Admin({ navigate }) {
                           {orders.slice(0, 6).map((order) => (
                             <tr key={order._id} className="border-b border-black/[.04] last:border-0">
                               <td className="px-3 py-4">
-                                <p className="text-xs font-black">
+                                <p className="text-xs font-bold text-[#292321]">
                                   #{order._id.slice(-8).toUpperCase()}
                                 </p>
                                 <p className="mt-1 text-[10px] text-black/35">
@@ -1306,7 +1210,7 @@ export default function Admin({ navigate }) {
               <section className="rounded-[30px] bg-white p-5 shadow-[0_8px_35px_rgba(0,0,0,.04)] sm:p-7">
                 <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#c62828]">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#751F2B]">
                       Catalogue
                     </p>
                     <h2 className="mt-1 text-[28px] font-black tracking-[-0.05em]">
@@ -1326,7 +1230,7 @@ export default function Admin({ navigate }) {
                         block: "start",
                       });
                     }}
-                    className="flex items-center justify-center gap-2 rounded-2xl bg-[#c62828] px-5 py-3 text-xs font-black text-white shadow-[0_8px_20px_rgba(198,40,40,.18)]"
+                    className="flex items-center justify-center gap-2 rounded-2xl bg-[#751F2B] px-5 py-3 text-xs font-black text-white shadow-[0_8px_20px_rgba(198,40,40,.18)]"
                   >
                     <Icon name="plus" size={15} />
                     New product
@@ -1334,19 +1238,19 @@ export default function Admin({ navigate }) {
                 </div>
               </section>
 
-              <div className="grid gap-6 xl:grid-cols-[390px_1fr]">
+              <div className="grid items-start gap-5 xl:grid-cols-[340px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]">
 
                 {/* EDITOR */}
                 <section
                   id="product-editor"
-                  className="rounded-[28px] bg-[#171717] p-5 text-white shadow-[0_8px_35px_rgba(0,0,0,.08)] sm:p-6"
+                  className="rounded-2xl border border-[#E5DED5] bg-white p-4 text-[#292321] shadow-[0_4px_18px_rgba(41,35,33,.04)] sm:p-5"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#ef5350]">
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#751F2B]">
                         {editingProduct ? "Editing item" : "New item"}
                       </p>
-                      <h3 className="mt-1 text-xl font-black tracking-[-0.04em]">
+                      <h3 className="mt-1 text-lg font-black tracking-[-0.04em] text-[#292321]">
                         {editingProduct ? editingProduct.name : "Add a product"}
                       </h3>
                     </div>
@@ -1354,16 +1258,16 @@ export default function Admin({ navigate }) {
                     {editingProduct && (
                       <button
                         onClick={resetProductForm}
-                        className="rounded-xl bg-white/10 p-2 text-white/60 hover:text-white"
+                        className="rounded-lg border border-[#E5DED5] p-2 text-[#82766F] transition hover:bg-[#F7F4EF] hover:text-[#292321]"
                       >
                         <Icon name="close" size={15} />
                       </button>
                     )}
                   </div>
 
-                  <div className="mt-6 space-y-4">
+                  <div className="mt-4 space-y-3">
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                         Product name
                       </label>
                       <input
@@ -1372,12 +1276,12 @@ export default function Admin({ navigate }) {
                           setForm({ ...form, name: e.target.value })
                         }
                         placeholder="Chicken Breast"
-                        className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3 text-sm outline-none placeholder:text-white/20 focus:border-white/25"
+                        className="mt-1.5 w-full rounded-xl border border-[#E5DED5] bg-[#FCFBF9] px-3 py-2.5 text-sm text-[#292321] outline-none placeholder:text-[#B0A69F] focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
                       />
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                         Description
                       </label>
                       <textarea
@@ -1387,12 +1291,12 @@ export default function Admin({ navigate }) {
                         }
                         rows={3}
                         placeholder="Fresh, cleaned and ready to cook."
-                        className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3 text-sm outline-none placeholder:text-white/20 focus:border-white/25"
+                        className="mt-1.5 w-full resize-none rounded-xl border border-[#E5DED5] bg-[#FCFBF9] px-3 py-2.5 text-sm text-[#292321] outline-none transition placeholder:text-[#B0A69F] focus:border-[#751F2B] focus:bg-white focus:ring-2 focus:ring-[#751F2B]/10"
                       />
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                         Category
                       </label>
                       <input
@@ -1401,17 +1305,17 @@ export default function Admin({ navigate }) {
                           setForm({ ...form, category: e.target.value })
                         }
                         placeholder="Chicken"
-                        className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3 text-sm outline-none placeholder:text-white/20 focus:border-white/25"
+                        className="mt-1.5 w-full rounded-xl border border-[#E5DED5] bg-[#FCFBF9] px-3 py-2.5 text-sm text-[#292321] outline-none placeholder:text-[#B0A69F] focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
                       />
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                           Price
                         </label>
                         <div className="relative mt-2">
-                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-white/35">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#82766F]">
                             ₹
                           </span>
                           <input
@@ -1421,13 +1325,13 @@ export default function Admin({ navigate }) {
                             onChange={(e) =>
                               setForm({ ...form, price: e.target.value })
                             }
-                            className="w-full rounded-2xl border border-white/10 bg-white/[.07] py-3 pl-8 pr-3 text-sm outline-none focus:border-white/25"
+                            className="w-full rounded-xl border border-[#E5DED5] bg-[#FCFBF9] py-2.5 pl-8 pr-3 text-sm text-[#292321] outline-none focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                           Weight
                         </label>
                         <div className="relative mt-2">
@@ -1438,9 +1342,9 @@ export default function Admin({ navigate }) {
                             onChange={(e) =>
                               setForm({ ...form, weight: e.target.value })
                             }
-                            className="w-full rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3 pr-12 text-sm outline-none focus:border-white/25"
+                            className="w-full rounded-xl border border-[#E5DED5] bg-[#FCFBF9] px-3 py-2.5 pr-12 text-sm text-[#292321] outline-none focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
                           />
-                          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-white/30">
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[#82766F]">
                             g
                           </span>
                         </div>
@@ -1448,7 +1352,7 @@ export default function Admin({ navigate }) {
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                         Stock
                       </label>
                       <input
@@ -1457,20 +1361,20 @@ export default function Admin({ navigate }) {
                         onChange={(e) =>
                           setForm({ ...form, stock: e.target.value })
                         }
-                        className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[.07] px-4 py-3 text-sm outline-none focus:border-white/25"
+                        className="mt-1.5 w-full rounded-xl border border-[#E5DED5] bg-[#FCFBF9] px-3 py-2.5 text-sm text-[#292321] outline-none focus:border-[#751F2B] focus:ring-2 focus:ring-[#751F2B]/10"
                       />
-                      <p className="mt-2 text-[10px] text-white/30">
+                      <p className="mt-1.5 text-[10px] leading-4 text-[#82766F]">
                         Zero and negative stock are allowed. Availability
                         controls whether customers can order.
                       </p>
                     </div>
 
-                    <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/10 bg-white/[.05] p-4">
+                    <label className="flex cursor-pointer items-center justify-between rounded-xl border border-[#E5DED5] bg-[#FCFBF9] p-3">
                       <div>
-                        <p className="text-xs font-black">
+                        <p className="text-xs font-bold text-[#292321]">
                           Available for ordering
                         </p>
-                        <p className="mt-1 text-[10px] text-white/35">
+                        <p className="mt-1 text-[10px] leading-4 text-[#82766F]">
                           Customers can add this item to cart.
                         </p>
                       </div>
@@ -1483,7 +1387,7 @@ export default function Admin({ navigate }) {
                             isAvailable: e.target.checked,
                           })
                         }
-                        className="h-5 w-5 accent-[#ef5350]"
+                        className="h-4 w-4 accent-[#751F2B]"
                       />
                     </label>
 
@@ -1491,10 +1395,10 @@ export default function Admin({ navigate }) {
                     <div>
                       <div className="flex items-center justify-between">
                         <div>
-                          <label className="text-[10px] font-bold uppercase tracking-wider text-white/40">
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-[#82766F]">
                             Product images
                           </label>
-                          <p className="mt-1 text-[10px] text-white/25">
+                          <p className="mt-1 text-[10px] text-[#9B918A]">
                             Up to 8 · 5MB each
                           </p>
                         </div>
@@ -1504,7 +1408,7 @@ export default function Admin({ navigate }) {
                             existingImages.length + selectedImages.length >= 8
                           }
                           onClick={() => fileInputRef.current?.click()}
-                          className="rounded-xl bg-white px-3 py-2 text-[10px] font-black text-[#171717] disabled:opacity-30"
+                          className="rounded-lg border border-[#E5DED5] bg-white px-3 py-2 text-[10px] font-bold text-[#751F2B] transition hover:bg-[#F7F4EF] disabled:opacity-30"
                         >
                           Add images
                         </button>
@@ -1525,7 +1429,7 @@ export default function Admin({ navigate }) {
                           {existingImages.map((image, index) => (
                             <div
                               key={`old-${image}-${index}`}
-                              className="group relative aspect-square overflow-hidden rounded-xl bg-white/10"
+                              className="group relative aspect-square overflow-hidden rounded-xl bg-[#F7F4EF]"
                             >
                               <img
                                 src={image}
@@ -1550,7 +1454,7 @@ export default function Admin({ navigate }) {
                           {imagePreviews.map((item, index) => (
                             <div
                               key={`new-${item.url}-${index}`}
-                              className="group relative aspect-square overflow-hidden rounded-xl bg-white/10"
+                              className="group relative aspect-square overflow-hidden rounded-xl bg-[#F7F4EF]"
                             >
                               <img
                                 src={item.url}
@@ -1577,13 +1481,13 @@ export default function Admin({ navigate }) {
                         <button
                           type="button"
                           onClick={() => fileInputRef.current?.click()}
-                          className="mt-3 flex w-full flex-col items-center justify-center rounded-2xl border border-dashed border-white/10 py-7 text-center hover:border-white/25"
+                          className="mt-3 flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-[#D8CEC5] bg-[#FCFBF9] py-5 text-center transition hover:border-[#751F2B] hover:bg-[#F7F4EF]"
                         >
                           <Icon name="image" size={24} />
-                          <p className="mt-2 text-xs font-bold text-white/60">
+                          <p className="mt-2 text-xs font-bold text-[#5C514B]">
                             Upload product photography
                           </p>
-                          <p className="mt-1 text-[10px] text-white/25">
+                          <p className="mt-1 text-[10px] text-[#9B918A]">
                             JPG, PNG or WEBP
                           </p>
                         </button>
@@ -1594,7 +1498,7 @@ export default function Admin({ navigate }) {
                       type="button"
                       onClick={saveProduct}
                       disabled={savingProduct || uploadingImages}
-                      className="flex w-full items-center justify-center gap-2 rounded-2xl bg-[#c62828] py-3.5 text-sm font-black text-white shadow-[0_10px_25px_rgba(198,40,40,.18)] disabled:opacity-40"
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#751F2B] py-3 text-sm font-bold text-white shadow-sm transition hover:bg-[#5F1822] disabled:opacity-40"
                     >
                       {uploadingImages
                         ? "Uploading images..."
@@ -1614,7 +1518,7 @@ export default function Admin({ navigate }) {
                       <button
                         type="button"
                         onClick={resetProductForm}
-                        className="w-full rounded-2xl border border-white/10 py-3 text-xs font-bold text-white/55 hover:text-white"
+                        className="w-full rounded-xl border border-[#E5DED5] py-2.5 text-xs font-bold text-[#82766F] transition hover:bg-[#F7F4EF] hover:text-[#292321]"
                       >
                         Cancel editing
                       </button>
@@ -1751,7 +1655,7 @@ export default function Admin({ navigate }) {
 
                               <button
                                 onClick={() => adjustProductStock(product, 1)}
-                                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#171717] text-white shadow-sm"
+                                className="flex h-8 w-8 items-center justify-center rounded-xl bg-[#751F2B] text-white shadow-sm"
                               >
                                 <Icon name="plus" size={14} />
                               </button>
@@ -1793,121 +1697,126 @@ export default function Admin({ navigate }) {
               ORDERS
           ================================================= */}
           {tab === "orders" && (
-            <div className="space-y-6">
-              <section className="rounded-[30px] bg-[#171717] p-6 text-white sm:p-8">
-                <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ef5350]">
-                      Order desk
-                    </p>
-                    <h2 className="mt-2 text-[30px] font-black tracking-[-0.05em]">
-                      Keep every order moving.
-                    </h2>
-                    <p className="mt-2 text-sm text-white/40">
-                      Update fulfilment status as orders move through the store.
-                    </p>
+            <div className="space-y-5">
+              {/* ORDERS INTRO */}
+              <section className="flex flex-col gap-5 rounded-[24px] border border-[#E5DED5] bg-white p-5 shadow-[0_4px_18px_rgba(41,35,33,.035)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-2 rounded-full bg-[#F8ECEE] px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.15em] text-[#751F2B]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#751F2B]" />
+                    Order desk
                   </div>
-                  <div className="rounded-2xl bg-white/10 px-5 py-4">
-                    <p className="text-[9px] uppercase tracking-wider text-white/35">
-                      Total order value
-                    </p>
-                    <p className="mt-1 text-xl font-black">
-                      ₹{totalRevenue}
-                    </p>
+                  <h2 className="mt-3 text-2xl font-black tracking-[-0.045em] text-[#292321] sm:text-[28px]">
+                    Orders, under control.
+                  </h2>
+                  <p className="mt-1.5 max-w-xl text-sm leading-6 text-[#81756F]">
+                    Track each order and move it through fulfilment with one clear action.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:min-w-[280px]">
+                  <div className="rounded-2xl border border-[#EAE3DC] bg-[#FBF9F6] px-4 py-3.5">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#8C817A]">Total orders</p>
+                    <p className="mt-1.5 text-2xl font-black tracking-tight text-[#292321]">{orders.length}</p>
+                  </div>
+                  <div className="rounded-2xl bg-[#751F2B] px-4 py-3.5 text-white">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/70">Order value</p>
+                    <p className="mt-1.5 text-2xl font-black tracking-tight">₹{totalRevenue}</p>
                   </div>
                 </div>
               </section>
 
-              <section className="rounded-[28px] bg-white p-5 shadow-[0_8px_35px_rgba(0,0,0,.04)] sm:p-6">
-                <SectionHeader
-                  eyebrow={`${orders.length} orders`}
-                  title="All orders"
-                  description="Process, pack and deliver."
-                />
+              <section className="overflow-hidden rounded-[24px] border border-[#E5DED5] bg-white shadow-[0_4px_22px_rgba(41,35,33,.035)]">
+                <div className="flex flex-col gap-3 border-b border-[#EEE8E1] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                  <div>
+                    <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-[#751F2B]">Order management</p>
+                    <h3 className="mt-1 text-xl font-black tracking-[-0.035em] text-[#292321]">All orders <span className="ml-1 inline-flex min-w-7 items-center justify-center rounded-full bg-[#F5F0EA] px-2 py-1 align-middle text-[11px] font-extrabold text-[#655951]">{orders.length}</span></h3>
+                    <p className="mt-1 text-sm text-[#8C817A]">Choose a status to update an order.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[11px] font-semibold text-[#766A63]">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F8ECEE] px-3 py-1.5"><span className="h-1.5 w-1.5 rounded-full bg-[#751F2B]" />Current status</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F7F4EF] px-3 py-1.5"><span className="h-1.5 w-1.5 rounded-full bg-[#B8ACA2]" />Available actions</span>
+                  </div>
+                </div>
 
                 {orders.length === 0 ? (
-                  <div className="rounded-2xl bg-[#f7f6f3] p-12 text-center">
-                    <p className="font-black">No orders found.</p>
-                    <p className="mt-1 text-xs text-black/40">
-                      Customer and POS orders will appear here.
-                    </p>
+                  <div className="m-5 rounded-2xl border border-dashed border-[#DDD3C9] bg-[#FBF9F6] px-5 py-14 text-center sm:m-6">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-[#8C817A] shadow-sm"><Icon name="orders" size={21} /></div>
+                    <p className="mt-4 font-extrabold text-[#292321]">No orders yet</p>
+                    <p className="mt-1 text-sm text-[#8C817A]">Customer and POS orders will appear here.</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {orders.map((order) => (
-                      <div
-                        key={order._id}
-                        className="rounded-[22px] border border-black/[.05] bg-[#fcfbf9] p-4"
-                      >
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-                          <div className="flex min-w-0 flex-1 items-center gap-3">
-                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#171717] text-xs font-black text-white">
-                              #
+                  <div className="divide-y divide-[#EEE8E1]">
+                    {orders.map((order) => {
+                      const terminalStatus = order.status === "DELIVERED" || order.status === "CANCELLED";
+                      const statuses = ["ACCEPTED", "PROCESSING", "PACKED", "OUT_FOR_DELIVERY", "DELIVERED", "CANCELLED"];
+                      const activeStatusClass = {
+                        ACCEPTED: "border-[#751F2B] bg-[#751F2B] text-white shadow-sm",
+                        PROCESSING: "border-amber-500 bg-amber-500 text-white shadow-sm",
+                        PACKED: "border-violet-600 bg-violet-600 text-white shadow-sm",
+                        OUT_FOR_DELIVERY: "border-orange-500 bg-orange-500 text-white shadow-sm",
+                        DELIVERED: "border-emerald-600 bg-emerald-600 text-white shadow-sm",
+                        CANCELLED: "border-red-600 bg-red-600 text-white shadow-sm",
+                      };
+                      return (
+                        <article key={order._id} className="px-4 py-5 transition-colors hover:bg-[#FFFEFC] sm:px-6">
+                          <div className="grid gap-5 xl:grid-cols-[minmax(200px,1fr)_170px_minmax(380px,1.35fr)] xl:items-center">
+                            <div className="flex min-w-0 items-center gap-3.5">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F8ECEE] text-[#751F2B]"><Icon name="orders" size={19} /></div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-black tracking-tight text-[#292321]">#{order._id.slice(-8).toUpperCase()}</p>
+                                <p className="mt-1 truncate text-xs text-[#81756F]">{order.user?.name || "Customer"}</p>
+                                <p className="mt-0.5 truncate text-xs text-[#A0958C]">{order.user?.phone || "No phone"}</p>
+                              </div>
                             </div>
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-black">
-                                #{order._id.slice(-8).toUpperCase()}
-                              </p>
-                              <p className="mt-1 text-xs text-black/40">
-                                {order.user?.name || "Customer"} ·{" "}
-                                {order.user?.phone || "No phone"}
-                              </p>
-                            </div>
-                          </div>
 
-                          <div className="flex items-center gap-5">
-                            <div>
-                              <p className="text-[9px] uppercase tracking-wider text-black/30">
-                                Payment
-                              </p>
-                              <p className="mt-1 text-xs font-black">
-                                {order.paymentMethod || "COD"}
-                              </p>
+                            <div className="flex items-center gap-7 xl:border-l xl:border-[#EEE8E1] xl:pl-5">
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A0958C]">Payment</p>
+                                <p className="mt-1.5 text-xs font-extrabold text-[#514740]">{order.paymentMethod || "COD"}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#A0958C]">Total</p>
+                                <p className="mt-1 text-base font-black text-[#292321]">₹{order.totalAmount || 0}</p>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-[9px] uppercase tracking-wider text-black/30">
-                                Total
-                              </p>
-                              <p className="mt-1 text-sm font-black">
-                                ₹{order.totalAmount || 0}
-                              </p>
-                            </div>
-                          </div>
 
-                          <div className="lg:w-[340px]">
-                            <div className="flex flex-wrap gap-1.5">
-                              {[
-                                "ACCEPTED",
-                                "PROCESSING",
-                                "PACKED",
-                                "OUT_FOR_DELIVERY",
-                                "DELIVERED",
-                                "CANCELLED",
-                              ].map((nextStatus) => (
-                                <button
-                                  key={nextStatus}
-                                  disabled={
-                                    order.status === nextStatus ||
-                                    order.status === "DELIVERED" ||
-                                    order.status === "CANCELLED"
-                                  }
-                                  onClick={() =>
-                                    status(order._id, nextStatus)
-                                  }
-                                  className={`rounded-full border px-2.5 py-1.5 text-[8px] font-black transition disabled:cursor-not-allowed disabled:opacity-25 ${
-                                    order.status === nextStatus
-                                      ? "border-black bg-black text-white"
-                                      : "border-black/7 bg-white text-black/55 hover:bg-black hover:text-white"
-                                  }`}
-                                >
-                                  {nextStatus.replaceAll("_", " ")}
-                                </button>
-                              ))}
+                            <div className="min-w-0 xl:border-l xl:border-[#EEE8E1] xl:pl-5">
+                              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8C817A]">Update status</p>
+                                <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-extrabold ${statusStyles[order.status] || "bg-[#F5F0EA] text-[#655951]"}`}>
+                                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                                  {(order.status || "PENDING").replaceAll("_", " ")}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                                {statuses.map((nextStatus) => {
+                                  const selected = order.status === nextStatus;
+                                  const disabled = selected || terminalStatus;
+                                  return (
+                                    <button
+                                      key={nextStatus}
+                                      type="button"
+                                      disabled={disabled}
+                                      onClick={() => status(order._id, nextStatus)}
+                                      title={selected ? "Current order status" : terminalStatus ? "This order is closed" : `Move order to ${nextStatus.replaceAll("_", " ")}`}
+                                      className={`min-h-[38px] rounded-xl border px-2.5 py-2 text-[10px] font-extrabold leading-tight transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-[#751F2B]/25 focus:ring-offset-1 ${
+                                        selected
+                                          ? activeStatusClass[nextStatus]
+                                          : disabled
+                                            ? "cursor-not-allowed border-[#EEE8E1] bg-[#F8F6F3] text-[#C3B9B0]"
+                                            : "border-[#E5DED5] bg-white text-[#655951] hover:border-[#751F2B] hover:bg-[#F8ECEE] hover:text-[#751F2B] active:scale-[.98]"
+                                      }`}
+                                    >
+                                      {nextStatus.replaceAll("_", " ")}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              {terminalStatus && <p className="mt-2 text-[10px] text-[#A0958C]">This order is closed and can’t be changed.</p>}
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    ))}
+                        </article>
+                      );
+                    })}
                   </div>
                 )}
               </section>
@@ -1920,9 +1829,9 @@ export default function Admin({ navigate }) {
           {tab === "pos" && (
             <div className="space-y-6">
 
-              <section className="rounded-[30px] bg-[#171717] p-6 text-white sm:p-8">
+              <section className="rounded-[30px] bg-[#751F2B] p-6 text-white sm:p-8">
                 <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ef5350]">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-[#751F2B]">
                     Counter
                   </p>
                   <h2 className="mt-2 text-[30px] font-black tracking-[-0.05em]">
@@ -2001,7 +1910,7 @@ export default function Admin({ navigate }) {
                 <aside className="h-fit rounded-[28px] bg-white p-5 shadow-[0_8px_35px_rgba(0,0,0,.05)] xl:sticky xl:top-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#c62828]">
+                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-[#751F2B]">
                         Current bill
                       </p>
                       <h3 className="mt-1 text-xl font-black">
@@ -2039,7 +1948,7 @@ export default function Admin({ navigate }) {
                       type="button"
                       onClick={lookup}
                       disabled={lookingUpCustomer}
-                      className="rounded-2xl bg-[#171717] px-4 text-xs font-black text-white disabled:opacity-50"
+                      className="rounded-2xl bg-[#751F2B] px-4 text-xs font-black text-white disabled:opacity-50"
                     >
                       {lookingUpCustomer ? "Finding…" : "Find"}
                     </button>
@@ -2066,7 +1975,7 @@ export default function Admin({ navigate }) {
 
                   {showCreateCustomer && !customer && (
                     <div className="mt-3 rounded-2xl border border-dashed border-[#c62828]/25 bg-[#fff9f7] p-4">
-                      <p className="text-xs font-black">New customer</p>
+                      <p className="text-xs font-bold text-[#292321]">New customer</p>
                       <p className="mt-1 text-[10px] leading-4 text-black/45">
                         This phone number is not registered yet. Add the customer's name to continue.
                       </p>
@@ -2081,20 +1990,20 @@ export default function Admin({ navigate }) {
                         }}
                         placeholder="Enter full name"
                         autoComplete="name"
-                        className="mt-2 w-full rounded-xl border border-black/10 bg-white px-3 py-3 text-xs outline-none focus:border-[#c62828]/50"
+                        className="mt-2 w-full rounded-xl border border-[#E5DED5] bg-white px-3 py-3 text-xs outline-none focus:border-[#c62828]/50"
                       />
                       <button
                         type="button"
                         onClick={createPOSCustomer}
                         disabled={creatingCustomer || !customerName.trim()}
-                        className="mt-3 w-full rounded-xl bg-[#c62828] px-4 py-3 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        className="mt-3 w-full rounded-xl bg-[#751F2B] px-4 py-3 text-xs font-black text-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {creatingCustomer ? "Creating customer…" : "Create customer"}
                       </button>
                     </div>
                   )}
 
-                  <div className="my-5 border-t border-dashed border-black/10" />
+                  <div className="my-5 border-t border-dashed border-[#E5DED5]" />
 
                   <div className="mb-3 flex items-center justify-between">
                     <p className="text-[10px] font-black uppercase tracking-[0.16em] text-black/35">
@@ -2192,7 +2101,7 @@ export default function Admin({ navigate }) {
                     <button
                       onClick={posCreate}
                       disabled={!customer || cart.length === 0 || posCreating}
-                      className="mt-4 w-full rounded-2xl bg-[#c62828] py-3.5 text-xs font-black text-white shadow-[0_10px_25px_rgba(198,40,40,.15)] disabled:cursor-not-allowed disabled:opacity-35"
+                      className="mt-4 w-full rounded-2xl bg-[#751F2B] py-3.5 text-xs font-black text-white shadow-[0_10px_25px_rgba(198,40,40,.15)] disabled:cursor-not-allowed disabled:opacity-35"
                     >
                       {posCreating ? "Creating bill…" : "Create COD bill"}
                     </button>
@@ -2245,9 +2154,9 @@ export default function Admin({ navigate }) {
                   </button>
                 </div>
 
-                <div id="pos-receipt-print" className="mx-auto rounded-2xl bg-white p-6 text-[#171717] shadow-2xl">
+                <div id="pos-receipt-print" className="mx-auto rounded-2xl bg-white p-6 text-[#292321] shadow-2xl">
                   <div className="text-center">
-                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#c62828]">
+                    <p className="text-[10px] font-black uppercase tracking-[0.24em] text-[#751F2B]">
                       Dilli Cuts
                     </p>
                     <h2 className="mt-1 text-2xl font-black tracking-tight">Sales Receipt</h2>
@@ -2316,14 +2225,14 @@ export default function Admin({ navigate }) {
                   <button
                     type="button"
                     onClick={() => window.print()}
-                    className="flex-1 rounded-2xl bg-white px-5 py-3.5 text-xs font-black text-[#171717] transition hover:bg-[#f3f0eb]"
+                    className="flex-1 rounded-2xl bg-white px-5 py-3.5 text-xs font-black text-[#292321] transition hover:bg-[#F7F4EF]"
                   >
                     Print receipt
                   </button>
                   <button
                     type="button"
                     onClick={() => setPosReceipt(null)}
-                    className="flex-1 rounded-2xl bg-[#c62828] px-5 py-3.5 text-xs font-black text-white transition hover:bg-[#ad2222]"
+                    className="flex-1 rounded-2xl bg-[#751F2B] px-5 py-3.5 text-xs font-black text-white transition hover:bg-[#5F1822]"
                   >
                     Done
                   </button>
