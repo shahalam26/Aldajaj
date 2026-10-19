@@ -14,6 +14,8 @@ import paymentRoute from "./routes/payment.route.js";
 import paymentWebhookRoute from "./routes/payment.webhook.route.js";
 import uploadRoutes from "./routes/upload.route.js";
 import http from "http";
+import whatsappCloudWebhookRoute
+  from "./routes/whatsappCloudWebhook.route.js";
 import { initializeRealtime } from "./services/realtime.service.js";
 
 
@@ -60,6 +62,11 @@ app.use(
   "/api/payment/webhook",
   express.raw({ type: "application/json" }),
   paymentWebhookRoute
+);
+
+app.use(
+  "/api/whatsapp/webhook",
+  whatsappCloudWebhookRoute
 );
 
 // Security headers
