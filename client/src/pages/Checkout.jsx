@@ -559,7 +559,7 @@ export default function Checkout({ navigate }) {
                   </p>
                 </button>
 
-                <button
+                {/* <button
                   type="button"
                   onClick={() => setPaymentMethod("ONLINE")}
                   className={`rounded-xl border p-4 text-left transition ${
@@ -574,11 +574,11 @@ export default function Checkout({ navigate }) {
                   <p className="mt-1 text-xs leading-5 text-[#746B65]">
                     Continue to secure Cashfree payment.
                   </p>
-                </button>
+                </button> */}
               </div>
             </section>
           </div>
-
+      
           <aside className="h-fit rounded-2xl bg-[#292321] p-5 text-white sm:p-6 lg:sticky lg:top-6">
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/45">
               Order summary
