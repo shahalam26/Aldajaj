@@ -8,12 +8,18 @@ export default function ProductCard({ product }) {
 
   const image =
     typeof product?.image === "string" && product.image.trim()
-      ? product.image
+      ? product.image.trim()
       : Array.isArray(product?.images)
         ? product.images.find(
             (item) => typeof item === "string" && item.trim()
-          )
+          )?.trim() || ""
         : "";
+
+  const productName = product?.name?.trim() || "Fresh Meat";
+  const productDescription =
+    product?.description?.trim() || "Quality cuts, prepared with care.";
+
+  const imageAlt = `${productName} - fresh chicken and meat from Dilli Cuts`;
 
   const isAvailable = product?.isAvailable !== false;
   const price = Number(product?.price);
@@ -37,19 +43,21 @@ export default function ProductCard({ product }) {
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-[#E9E1D8] bg-white transition duration-300 hover:-translate-y-1 hover:border-[#D7B7B8] hover:shadow-xl hover:shadow-[#4B171B]/10">
-      {/* Product image */}
       <button
         type="button"
         onClick={openProduct}
-        aria-label={`View ${product?.name || "product"} details`}
+        aria-label={`View ${productName} details`}
         className="relative block w-full overflow-hidden bg-[#F6F2ED] text-left"
       >
         <div className="aspect-[4/3] overflow-hidden">
           {image && !imageError ? (
             <img
               src={image}
-              alt={product?.name || "Fresh meat product"}
+              alt={imageAlt}
+              width="800"
+              height="600"
               loading="lazy"
+              decoding="async"
               onError={() => setImageError(true)}
               className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
@@ -80,19 +88,14 @@ export default function ProductCard({ product }) {
         )}
       </button>
 
-      {/* Product details */}
       <div className="flex flex-1 flex-col p-4 sm:p-5">
-        <button
-          type="button"
-          onClick={openProduct}
-          className="text-left"
-        >
+        <button type="button" onClick={openProduct} className="text-left">
           <h3 className="line-clamp-2 min-h-[3.5rem] font-serif text-lg font-bold leading-7 text-[#282321] transition-colors group-hover:text-[#751F2B] sm:text-xl">
-            {product?.name || "Fresh Meat"}
+            {productName}
           </h3>
 
           <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-[#82766D]">
-            {product?.description || "Quality cuts, prepared with care."}
+            {productDescription}
           </p>
         </button>
 

@@ -3,6 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../services/api";
 import { useCart } from "../context/CartContext";
 
+const SITE_URL = "https://www.dillicuts.com";
+const DEFAULT_TITLE =
+  "Fresh Chicken & Mutton Online in Delhi | Dilli Cuts";
+const DEFAULT_DESCRIPTION =
+  "Order fresh chicken and mutton online from Dilli Cuts. Explore chicken cuts, boneless chicken and mutton with convenient online ordering and delivery in available Delhi service areas.";
+
 export default function ProductDetails({ productId, navigate }) {
   const { add } = useCart();
 
@@ -37,7 +43,8 @@ export default function ProductDetails({ productId, navigate }) {
           nextProduct.image ||
           (Array.isArray(nextProduct.images)
             ? nextProduct.images.find(
-                (image) => typeof image === "string" && image.trim()
+                (image) =>
+                  typeof image === "string" && image.trim()
               )
             : "") ||
           "";
@@ -70,10 +77,163 @@ export default function ProductDetails({ productId, navigate }) {
           product.image,
           ...(Array.isArray(product.images) ? product.images : []),
         ].filter(
-          (image) => typeof image === "string" && image.trim()
+          (image) =>
+            typeof image === "string" && image.trim()
         )
       )
     );
+  }, [product]);
+
+  // SEO: update metadata for the current product.
+  useEffect(() => {
+    if (!product?._id) return;
+
+    const productName = product.name || "Fresh Meat";
+    const description =
+      product.description ||
+      `Explore ${productName} from Dilli Cuts and order online.`;
+
+    const pageUrl =
+      `${SITE_URL}/product/${encodeURIComponent(product._id)}`;
+
+    const imageUrls = [
+      product.image,
+      ...(Array.isArray(product.images) ? product.images : []),
+    ]
+      .filter(
+        (image) =>
+          typeof image === "string" &&
+          /^https?:\/\//i.test(image.trim())
+      )
+      .map((image) => image.trim());
+
+    const setMeta = (attribute, key, content) => {
+      let element = document.head.querySelector(
+        `meta[${attribute}="${key}"]`
+      );
+
+      if (!element) {
+        element = document.createElement("meta");
+        element.setAttribute(attribute, key);
+        document.head.appendChild(element);
+      }
+
+      element.setAttribute("content", content);
+    };
+
+    const setCanonical = (url) => {
+      let element = document.head.querySelector(
+        'link[rel="canonical"]'
+      );
+
+      if (!element) {
+        element = document.createElement("link");
+        element.setAttribute("rel", "canonical");
+        document.head.appendChild(element);
+      }
+
+      element.setAttribute("href", url);
+    };
+
+    const pageTitle =
+      `${productName} | Order Online | Dilli Cuts`;
+
+    document.title = pageTitle;
+
+    setMeta("name", "description", description);
+    setMeta("property", "og:type", "product");
+    setMeta("property", "og:site_name", "Dilli Cuts");
+    setMeta("property", "og:title", pageTitle);
+    setMeta("property", "og:description", description);
+    setMeta("property", "og:url", pageUrl);
+
+    setMeta("name", "twitter:card", "summary_large_image");
+    setMeta("name", "twitter:title", pageTitle);
+    setMeta("name", "twitter:description", description);
+
+    if (imageUrls.length > 0) {
+      setMeta("property", "og:image", imageUrls[0]);
+      setMeta("name", "twitter:image", imageUrls[0]);
+    }
+
+    setCanonical(pageUrl);
+
+    // Product structured data for search engines.
+    let schemaElement = document.getElementById(
+      "dilli-cuts-product-schema"
+    );
+
+    if (!schemaElement) {
+      schemaElement = document.createElement("script");
+      schemaElement.id = "dilli-cuts-product-schema";
+      schemaElement.type = "application/ld+json";
+      document.head.appendChild(schemaElement);
+    }
+
+    const price = Number(product.price);
+    const hasValidPrice =
+      product.price !== null &&
+      product.price !== undefined &&
+      String(product.price).trim() !== "" &&
+      Number.isFinite(price) &&
+      price >= 0;
+
+    const schema = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      name: productName,
+      description,
+      url: pageUrl,
+      brand: {
+        "@type": "Brand",
+        name: "Dilli Cuts",
+      },
+      ...(imageUrls.length > 0
+        ? { image: imageUrls }
+        : {}),
+      ...(hasValidPrice
+        ? {
+            offers: {
+              "@type": "Offer",
+              url: pageUrl,
+              price: price.toFixed(2),
+              priceCurrency: "INR",
+              availability:
+                product.isAvailable === false
+                  ? "https://schema.org/OutOfStock"
+                  : "https://schema.org/InStock",
+              seller: {
+                "@type": "Organization",
+                name: "Dilli Cuts",
+              },
+            },
+          }
+        : {}),
+    };
+
+    schemaElement.textContent = JSON.stringify(schema);
+
+    return () => {
+      // Restore the default homepage metadata on cleanup.
+      document.title = DEFAULT_TITLE;
+
+      setMeta("name", "description", DEFAULT_DESCRIPTION);
+      setMeta("property", "og:type", "website");
+      setMeta("property", "og:site_name", "Dilli Cuts");
+      setMeta("property", "og:title", DEFAULT_TITLE);
+      setMeta("property", "og:description", DEFAULT_DESCRIPTION);
+      setMeta("property", "og:url", `${SITE_URL}/`);
+
+      setMeta("name", "twitter:card", "summary_large_image");
+      setMeta("name", "twitter:title", DEFAULT_TITLE);
+      setMeta("name", "twitter:description", DEFAULT_DESCRIPTION);
+
+      setCanonical(`${SITE_URL}/`);
+
+      document
+        .getElementById("dilli-cuts-product-schema")
+        ?.remove();
+    };
   }, [product]);
 
   const isAvailable = product?.isAvailable !== false;
@@ -163,7 +323,10 @@ export default function ProductDetails({ productId, navigate }) {
                 {selectedImage && !imageError ? (
                   <img
                     src={selectedImage}
-                    alt={product.name || "Fresh meat product"}
+                    alt={`${product.name || "Fresh meat product"} - Dilli Cuts`}
+                    width="480"
+                    height="480"
+                    decoding="async"
                     onError={() => setImageError(true)}
                     className="h-full w-full object-cover"
                   />
@@ -214,8 +377,11 @@ export default function ProductDetails({ productId, navigate }) {
                   >
                     <img
                       src={image}
-                      alt={`${product.name || "Product"} ${index + 1}`}
+                      alt={`${product.name || "Product"} - view ${index + 1}`}
+                      width="100"
+                      height="100"
                       loading="lazy"
+                      decoding="async"
                       className="h-full w-full object-cover"
                     />
                   </button>
