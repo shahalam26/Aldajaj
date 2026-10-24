@@ -14,7 +14,7 @@ const CATEGORIES = [
 
     name: "Chicken",
 
-    description: "Everyday favourites and fresh cuts.",
+    description: "Explore chicken cuts and everyday favourites available from Dilli Cuts in Delhi.",
 
   },
 
@@ -22,7 +22,7 @@ const CATEGORIES = [
 
     name: "Mutton",
 
-    description: "Rich cuts for special meals.",
+    description: "Browse mutton options for family meals and special occasions in Delhi.",
 
   },
 
@@ -30,7 +30,7 @@ const CATEGORIES = [
 
     name: "Fish",
 
-    description: "Choose fish for your favourite recipes.",
+    description: "Explore fish options for your favourite recipes, subject to availability.",
 
   },
 
@@ -640,11 +640,11 @@ export default function Home({ searchParams, navigate }) {
 
             <h1 className="mt-5 text-4xl font-black leading-[1.03] tracking-[-0.055em] text-[#292321] sm:text-5xl lg:text-6xl">
 
-              Choose your cut.
+              Order Fresh Chicken Online in Delhi
 
               <br />
 
-              <span className="text-[#751F2B]">Make it memorable.</span>
+              <span className="text-[#751F2B]">From Dilli Cuts</span>
 
             </h1>
 
@@ -652,9 +652,8 @@ export default function Home({ searchParams, navigate }) {
 
             <p className="mt-5 max-w-lg text-sm leading-7 text-[#746B65] sm:text-base">
 
-              Explore chicken, mutton and fish options for everyday meals
-
-              and special occasions.
+              Shop chicken cuts and other meat options from Dilli Cuts. Browse available products,
+              compare prices, and check delivery availability for your area in Delhi.
 
             </p>
 
@@ -698,21 +697,17 @@ export default function Home({ searchParams, navigate }) {
 
               {CATEGORIES.map((category) => (
 
-                <button
-
+                <a
                   key={category.name}
-
-                  type="button"
-
-                  onClick={() => openCategory(category)}
-
+                  href={`/?category=${encodeURIComponent(category.name)}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openCategory(category);
+                  }}
                   className="transition hover:text-[#751F2B]"
-
                 >
-
-                  {category.name}
-
-                </button>
+                  {category.name} in Delhi
+                </a>
 
               ))}
 
@@ -1059,6 +1054,34 @@ export default function Home({ searchParams, navigate }) {
       </section>
 
 
+
+      {/* LOCAL SEO CONTENT: keep this accurate to the areas actually served. */}
+      <section aria-labelledby="delhi-meat-heading" className="bg-white py-10 sm:py-14">
+        <div className="mx-auto max-w-4xl px-5 sm:px-8">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#751F2B]">
+            Dilli Cuts · Delhi
+          </p>
+          <h2 id="delhi-meat-heading" className="mt-2 text-2xl font-black tracking-tight text-[#292321] sm:text-3xl">
+            Buy Chicken Online in Delhi with Dilli Cuts
+          </h2>
+          <p className="mt-4 text-sm leading-7 text-[#746B65] sm:text-base">
+            Looking for chicken online in Delhi? Explore the products currently listed on Dilli Cuts,
+            check product details and prices, and confirm whether delivery is available in your area
+            before placing an order. Product selection and availability may change.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-x-5 gap-y-2 text-sm font-semibold text-[#751F2B]">
+            <a href="/?category=Chicken" onClick={(event) => { event.preventDefault(); openCategory({ name: "Chicken" }); }} className="hover:underline">
+              Chicken in Delhi
+            </a>
+            <a href="/?category=Mutton" onClick={(event) => { event.preventDefault(); openCategory({ name: "Mutton" }); }} className="hover:underline">
+              Mutton in Delhi
+            </a>
+            <a href="/?category=Fish" onClick={(event) => { event.preventDefault(); openCategory({ name: "Fish" }); }} className="hover:underline">
+              Fish in Delhi
+            </a>
+          </div>
+        </div>
+      </section>
 
       {/* PRODUCT GRID */}
 

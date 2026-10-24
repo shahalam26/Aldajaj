@@ -25,12 +25,32 @@ export default function ProductCard({ product }) {
   const price = Number(product?.price);
   const hasPrice = Number.isFinite(price) && price >= 0;
 
-  const openProduct = () => {
-    if (product?._id) {
-      window.history.pushState({}, "", `/product/${product._id}`);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      window.scrollTo({ top: 0, behavior: "smooth" });
+  const productUrl = product?._id
+    ? `/product/${encodeURIComponent(product._id)}`
+    : "/";
+
+  const openProduct = (event) => {
+    if (!product?._id) {
+      event.preventDefault();
+      return;
     }
+
+    // Keep native link behaviour for new tabs, external tools and modified clicks.
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    window.history.pushState({}, "", productUrl);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const handleAdd = (event) => {
@@ -43,8 +63,8 @@ export default function ProductCard({ product }) {
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-[#E9E1D8] bg-white transition duration-300 hover:-translate-y-1 hover:border-[#D7B7B8] hover:shadow-xl hover:shadow-[#4B171B]/10">
-      <button
-        type="button"
+      <a
+        href={productUrl}
         onClick={openProduct}
         aria-label={`View ${productName} details`}
         className="relative block w-full overflow-hidden bg-[#F6F2ED] text-left"
@@ -86,10 +106,10 @@ export default function ProductCard({ product }) {
             </span>
           </div>
         )}
-      </button>
+      </a>
 
       <div className="flex flex-1 flex-col p-4 sm:p-5">
-        <button type="button" onClick={openProduct} className="text-left">
+        <a href={productUrl} onClick={openProduct} className="block text-left">
           <h3 className="line-clamp-2 min-h-[3.5rem] font-serif text-lg font-bold leading-7 text-[#282321] transition-colors group-hover:text-[#751F2B] sm:text-xl">
             {productName}
           </h3>
@@ -97,7 +117,7 @@ export default function ProductCard({ product }) {
           <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-[#82766D]">
             {productDescription}
           </p>
-        </button>
+        </a>
 
         <div className="mt-4 flex items-end justify-between gap-3 border-t border-[#EEE8E1] pt-4">
           <div className="min-w-0">

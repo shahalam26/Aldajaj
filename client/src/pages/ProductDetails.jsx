@@ -84,28 +84,10 @@ export default function ProductDetails({ productId, navigate }) {
     );
   }, [product]);
 
-  // SEO: update metadata for the current product.
+  // SEO: update metadata for the current product and prevent failed product
+  // routes from inheriting the indexable homepage metadata (soft-404 signal).
   useEffect(() => {
-    if (!product?._id) return;
-
-    const productName = product.name || "Fresh Meat";
-    const description =
-      product.description ||
-      `Explore ${productName} from Dilli Cuts and order online.`;
-
-    const pageUrl =
-      `${SITE_URL}/product/${encodeURIComponent(product._id)}`;
-
-    const imageUrls = [
-      product.image,
-      ...(Array.isArray(product.images) ? product.images : []),
-    ]
-      .filter(
-        (image) =>
-          typeof image === "string" &&
-          /^https?:\/\//i.test(image.trim())
-      )
-      .map((image) => image.trim());
+    if (loading) return;
 
     const setMeta = (attribute, key, content) => {
       let element = document.head.querySelector(
@@ -122,24 +104,50 @@ export default function ProductDetails({ productId, navigate }) {
     };
 
     const setCanonical = (url) => {
-      let element = document.head.querySelector(
-        'link[rel="canonical"]'
-      );
-
+      let element = document.head.querySelector('link[rel="canonical"]');
       if (!element) {
         element = document.createElement("link");
         element.setAttribute("rel", "canonical");
         document.head.appendChild(element);
       }
-
       element.setAttribute("href", url);
     };
 
+    if (!product?._id) {
+      document.title = "Product unavailable | Dilli Cuts";
+      setMeta("name", "robots", "noindex, follow");
+      setMeta("name", "description", "This product could not be found. Browse available products at Dilli Cuts.");
+      setCanonical(`${SITE_URL}/product/${encodeURIComponent(productId)}`);
+      document.getElementById("dilli-cuts-product-schema")?.remove();
+      return;
+    }
+
+    const productName = product.name || "Fresh Meat";
+    const rawDescription =
+      product.description ||
+      `Explore ${productName} from Dilli Cuts and order online in Delhi.`;
+    const description = rawDescription.replace(/\s+/g, " ").trim().slice(0, 300);
+
+    const pageUrl =
+      `${SITE_URL}/product/${encodeURIComponent(product._id)}`;
+
+    const imageUrls = [
+      product.image,
+      ...(Array.isArray(product.images) ? product.images : []),
+    ]
+      .filter(
+        (image) =>
+          typeof image === "string" &&
+          /^https?:\/\//i.test(image.trim())
+      )
+      .map((image) => image.trim());
+
     const pageTitle =
-      `${productName} | Order Online | Dilli Cuts`;
+      `${productName} Online in Delhi | Dilli Cuts`;
 
     document.title = pageTitle;
 
+    setMeta("name", "robots", "index, follow");
     setMeta("name", "description", description);
     setMeta("property", "og:type", "product");
     setMeta("property", "og:site_name", "Dilli Cuts");
@@ -198,6 +206,9 @@ export default function ProductDetails({ productId, navigate }) {
               url: pageUrl,
               price: price.toFixed(2),
               priceCurrency: "INR",
+              ...(Number.isFinite(Number(product.weight)) && Number(product.weight) > 0
+                ? { description: `Pack size: ${Number(product.weight)} g` }
+                : {}),
               availability:
                 product.isAvailable === false
                   ? "https://schema.org/OutOfStock"
@@ -217,6 +228,7 @@ export default function ProductDetails({ productId, navigate }) {
       // Restore the default homepage metadata on cleanup.
       document.title = DEFAULT_TITLE;
 
+      setMeta("name", "robots", "index, follow");
       setMeta("name", "description", DEFAULT_DESCRIPTION);
       setMeta("property", "og:type", "website");
       setMeta("property", "og:site_name", "Dilli Cuts");
@@ -234,7 +246,7 @@ export default function ProductDetails({ productId, navigate }) {
         .getElementById("dilli-cuts-product-schema")
         ?.remove();
     };
-  }, [product]);
+  }, [product, loading, productId]);
 
   const isAvailable = product?.isAvailable !== false;
   const price = Number(product?.price);
